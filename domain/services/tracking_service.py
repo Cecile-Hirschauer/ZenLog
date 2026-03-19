@@ -1,7 +1,8 @@
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 from domain.entities.indicator import Indicator
+from domain.entities.trend import Trend
 from domain.entities.wellness_entry import WellnessEntry
 from domain.ports.indicator_repository import IndicatorRepository
 from domain.ports.wellness_entry_repository import WellnessEntryRepository
@@ -114,3 +115,30 @@ class TrackingService:
                 f"Value {value} is out of range "
                 f"[{indicator.min_value}, {indicator.max_value}]"
             )
+
+    def compute_trend(
+        self, patient_id: str, indicator_id: str, period_days: int
+    ) -> Trend:
+        """T-D-07, T-D-08: Compute average over a period , excluding missing days."""
+        date_to = date.today()
+        date_from = date_to - timedelta(days=period_days)
+
+        entries = self.entry_repo.find_by_patient(
+            patient_id=patient_id,
+            indicator_id=indicator_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+
+        entry_count = len(entries)
+        average = (
+            sum(e.value for e in entries) / entry_count if entry_count > 0 else None
+        )
+
+        return Trend(
+            patient_id=patient_id,
+            indicator_id=indicator_id,
+            period_days=period_days,
+            average=average,
+            entry_count=entry_count,
+        )
