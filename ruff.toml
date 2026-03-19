@@ -1,0 +1,24 @@
+# Ruff — linter + formatter
+target-version = "py312"
+line-length = 88
+
+[lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort (import sorting)
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "C4",  # flake8-comprehensions
+]
+ignore = [
+    "E501", # line too long (handled by formatter)
+]
+
+[lint.isort]
+known-third-party = ["django", "rest_framework"]
+known-first-party = ["domain", "infrastructure"]
+
