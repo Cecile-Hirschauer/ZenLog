@@ -100,3 +100,45 @@ class WellnessEntry(models.Model):
 
     def __str__(self):
         return f"{self.patient_id} - {self.indicator.name} - {self.date}"
+    
+    
+class Assignment(models.Model):
+    """A coach-patient relationship with lifecycle management.
+
+    Maps to the domain entity domain.entities.assignment.Assignment.
+    Only admins can create or deactivate assignments.
+    Active assignment grants the coach read-only access to patient data.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    coach = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="coaching_assignments",
+        limit_choices_to={"role": User.Role.COACH},
+    )
+    patient = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="patient_assignments",
+        limit_choices_to={"role": User.Role.PATIENT},
+    )
+    start_date = models.DateField()
+    end_date = models.DateField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "wellness_assignment"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["coach", "patient"],
+                condition=models.Q(is_active=True),
+                name="unique_active_assignment_per_coach_patient",
+            ),
+        ]
+
+    def __str__(self):
+        status = "active" if self.is_active else "inactive"
+        return f"Coach {self.coach_id} → Patient {self.patient_id} ({status})"
+    
