@@ -1,0 +1,137 @@
+---
+title: ZenLog — Diagramme de classes (Domain Layer)
+---
+classDiagram
+    direction TB
+
+    %% ============================================
+    %% BC 1 : Wellness Tracking
+    %% ============================================
+
+    class WellnessEntry {
+        -UUID id
+        -UUID patient_id
+        -UUID indicator_id
+        -date date
+        -float value
+        -str note
+        -datetime created_at
+        -datetime updated_at
+        +validate_value(indicator: Indicator) bool
+        +is_owned_by(patient_id: UUID) bool
+    }
+
+    class Indicator {
+        -UUID id
+        -str name
+        -str unit
+        -float min_value
+        -float max_value
+        -bool is_active
+        +is_value_in_range(value: float) bool
+    }
+
+    class Trend {
+        <<value object>>
+        -UUID patient_id
+        -UUID indicator_id
+        -int period_days
+        -float average
+        -int entry_count
+        -date start_date
+        -date end_date
+    }
+
+    class TrackingService {
+        <<domain service>>
+        -WellnessEntryRepository entry_repo
+        -IndicatorRepository indicator_repo
+        +create_entry(patient_id, indicator_id, date, value, note) WellnessEntry
+        +update_entry(patient_id, entry_id, value, note) WellnessEntry
+        +get_history(patient_id, filters) list~WellnessEntry~
+        +compute_trend(patient_id, indicator_id, period_days) Trend
+    }
+
+    %% ============================================
+    %% BC 2 : Coaching
+    %% ============================================
+
+    class Assignment {
+        -UUID id
+        -UUID coach_id
+        -UUID patient_id
+        -date start_date
+        -date end_date
+        -bool is_active
+        +is_currently_active() bool
+        +deactivate(end_date: date) void
+    }
+
+    class CoachingService {
+        <<domain service>>
+        -AssignmentRepository assignment_repo
+        -WellnessEntryRepository entry_repo
+        +check_access(coach_id, patient_id) bool
+        +get_patient_list(coach_id) list~UUID~
+        +get_patient_data(coach_id, patient_id, filters) list~WellnessEntry~
+    }
+
+    %% ============================================
+    %% Ports (abstract interfaces)
+    %% ============================================
+
+    class WellnessEntryRepository {
+        <<interface>>
+        +save(entry: WellnessEntry) WellnessEntry
+        +find_by_id(entry_id: UUID) WellnessEntry
+        +find_by_patient(patient_id: UUID, filters) list~WellnessEntry~
+        +find_by_patient_and_date_range(patient_id, indicator_id, start, end) list~WellnessEntry~
+        +exists(patient_id, indicator_id, date) bool
+    }
+
+    class IndicatorRepository {
+        <<interface>>
+        +save(indicator: Indicator) Indicator
+        +find_by_id(indicator_id: UUID) Indicator
+        +find_all_active() list~Indicator~
+    }
+
+    class AssignmentRepository {
+        <<interface>>
+        +save(assignment: Assignment) Assignment
+        +find_active_by_coach(coach_id: UUID) list~Assignment~
+        +find_active_by_coach_and_patient(coach_id, patient_id) Assignment
+        +exists_active(coach_id, patient_id) bool
+    }
+
+    %% ============================================
+    %% Infrastructure (Django) — hors domaine
+    %% ============================================
+
+    class User {
+        <<django.contrib.auth>>
+        -UUID id
+        -str email
+        -str password_hash
+        -str role : patient | coach | admin
+        -datetime date_joined
+        -bool is_active
+    }
+
+    %% ============================================
+    %% Relations
+    %% ============================================
+
+    WellnessEntry "many" --> "1" Indicator : references
+    WellnessEntry "many" ..> "1" User : patient_id (FK)
+    Assignment "many" ..> "1" User : coach_id (FK)
+    Assignment "many" ..> "1" User : patient_id (FK)
+
+    TrackingService --> WellnessEntryRepository : uses
+    TrackingService --> IndicatorRepository : uses
+    CoachingService --> AssignmentRepository : uses
+    CoachingService --> WellnessEntryRepository : uses
+
+    TrackingService ..> WellnessEntry : creates/reads
+    TrackingService ..> Trend : computes
+    CoachingService ..> Assignment : reads

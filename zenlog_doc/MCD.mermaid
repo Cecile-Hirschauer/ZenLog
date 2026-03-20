@@ -1,0 +1,50 @@
+---
+title: ZenLog - MCD - Separation par schema RGPD
+---
+erDiagram
+    IDENTITY_USER {
+        uuid id PK
+        varchar email UK "unique - not null"
+        varchar password_hash "not null"
+        varchar role "patient - coach - admin"
+        varchar first_name "PII"
+        varchar last_name "PII"
+        timestamp date_joined "auto"
+        boolean is_active "default true"
+    }
+
+    WELLNESS_INDICATOR {
+        uuid id PK
+        varchar name UK "unique - not null"
+        varchar unit "not null"
+        float min_value "not null"
+        float max_value "not null"
+        boolean is_active "default true"
+        timestamp created_at "auto"
+    }
+
+    WELLNESS_ENTRY {
+        uuid id PK
+        uuid patient_id FK "not null - ref identity.user"
+        uuid indicator_id FK "not null - ref indicator"
+        date date "not null"
+        float value "not null"
+        text note "nullable"
+        timestamp created_at "auto"
+        timestamp updated_at "auto"
+    }
+
+    WELLNESS_ASSIGNMENT {
+        uuid id PK
+        uuid coach_id FK "not null - ref identity.user"
+        uuid patient_id FK "not null - ref identity.user"
+        date start_date "not null"
+        date end_date "nullable"
+        boolean is_active "default true"
+        timestamp created_at "auto"
+    }
+
+    IDENTITY_USER ||--o{ WELLNESS_ENTRY : "patient saisit"
+    WELLNESS_INDICATOR ||--o{ WELLNESS_ENTRY : "mesure"
+    IDENTITY_USER ||--o{ WELLNESS_ASSIGNMENT : "coach"
+    IDENTITY_USER ||--o{ WELLNESS_ASSIGNMENT : "patient"
