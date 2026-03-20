@@ -1,6 +1,6 @@
 from domain.entities.wellness_entry import WellnessEntry
 from domain.ports.assignment_repository import AssignmentRepository
-from domain.ports.wellness_entry_repository import WellnessEntryRepository
+from domain.ports.patient_entry_reader import PatientEntryReader
 
 
 class CoachingService:
@@ -13,10 +13,10 @@ class CoachingService:
     def __init__(
         self,
         assignment_repo: AssignmentRepository,
-        entry_repo: WellnessEntryRepository,
+        entry_reader: PatientEntryReader,
     ):
         self.assignment_repo = assignment_repo
-        self.entry_repo = entry_repo
+        self.entry_reader = entry_reader
 
     def check_access(self, coach_id: str, patient_id: str) -> bool:
         """Check if coach has an active assignment to the patient.
@@ -59,4 +59,4 @@ class CoachingService:
             raise PermissionError(
                 f"Coach {coach_id} has no active assignment to patient {patient_id}"
             )
-        return self.entry_repo.find_by_patient(patient_id)
+        return self.entry_reader.find_by_patient(patient_id)
