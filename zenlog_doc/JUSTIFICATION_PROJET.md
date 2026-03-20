@@ -103,27 +103,6 @@ Chaque choix technique ci-dessous est motivé par un besoin métier ou un contex
 
 **Pourquoi pas SQLite ?** SQLite est pratique en développement local mais ne supporte pas les accès concurrents en écriture, n'offre pas de chiffrement au repos natif, et n'est pas adapté à un déploiement cloud multi-utilisateurs. Pour une application manipulant des données de santé en production, PostgreSQL est le choix responsable.
 
-#### Stratégie d'identifiants : UUID en base, `str` dans le domaine
-
-Le MCD et le diagramme de classes spécifient des identifiants UUID pour toutes les entités. En pratique, ce choix se décline en deux couches distinctes :
-
-| Couche | Type utilisé | Justification |
-| --- | --- | --- |
-| **Domaine** (entités, services, ports) | `str` | Le domaine reste agnostique du format d'identifiant. Il ne dépend pas du module `uuid` de Python ni d'aucun choix d'infrastructure. Si demain les IDs deviennent des ULID ou des identifiants externes, seule la couche infrastructure change. |
-| **Infrastructure** (modèles Django) | `UUIDField(primary_key=True, default=uuid4)` | UUID v4 en clé primaire pour la sécurité (non prédictible, contrairement aux IDs auto-incrémentés) et la conformité RGPD (un ID séquentiel révèle le nombre d'utilisateurs et l'ordre d'inscription). |
-
-**Pourquoi UUID plutôt qu'un auto-increment ?**
-
-- **Sécurité** : un ID séquentiel (`/api/patients/42/`) est prédictible — un attaquant peut énumérer les ressources. Un UUID (`/api/patients/a3f8b2c1-...`) ne révèle rien.
-- **RGPD** : un ID séquentiel expose indirectement des métadonnées (nombre total d'enregistrements, ordre de création). Les UUID éliminent cette fuite d'information.
-- **Architecture distribuée** : les UUID peuvent être générés côté client sans coordination avec la base, ce qui facilitera une future architecture événementielle ou un mode hors-ligne.
-
-**Pourquoi `str` dans le domaine plutôt que `UUID` ?**
-
-Le domaine métier n'a pas besoin de savoir qu'un identifiant est un UUID. Il a besoin d'une valeur opaque qui identifie une entité de manière unique. Utiliser `str` dans les dataclasses et les ports respecte le principe d'indépendance du domaine vis-à-vis de l'infrastructure — la même logique qui justifie de ne pas importer Django dans `domain/`. La conversion `str` ↔ `UUID` est assurée par les repositories, qui font le pont entre les deux mondes.
-
-**Impact sur les performances** : PostgreSQL stocke un UUID en 16 octets via son type natif `uuid`, contre 36 octets pour un `VARCHAR(36)` et 8 octets pour un `BIGINT`. L'overhead est minime et largement compensé par les bénéfices en sécurité. Pour une application de suivi bien-être avec quelques milliers d'entrées, la différence de performance est négligeable.
-
 ### 3.4 Authentification : JWT via djangorestframework-simplejwt
 
 | Besoin métier | Justification technique |
@@ -1032,3 +1011,412 @@ def service(entry_repo, indicator_repo):
 | **Test Doubles (Mocks)** | `tests/domain/*.py` | Tests rapides et isolés | — |
 
 **Cohérence globale** : ces patterns ne sont pas utilisés individuellement — ils forment un système cohérent. Le Repository Pattern n'a de sens que parce que l'injection de dépendances permet de le substituer en test. L'injection de dépendances n'a de sens que parce que les ports définissent des contrats abstraits. Les ports abstraits n'ont de sens que dans une architecture hexagonale qui sépare domaine et infrastructure. Chaque pattern renforce les autres et contribue à l'objectif central du projet : un domaine métier testable, maintenable et indépendant du framework.
+
+---
+
+## 7. Stratégie API — Conception, justification et plan d'implémentation
+
+### 7.1 Choix du style d'API : REST, GraphQL ou RPC ?
+
+ZenLog est une API back-end destinée à être consommée par un front-end mobile ou web. Ce type de client influence fortement le choix du style d'API. Trois options ont été évaluées :
+
+#### Option 1 — REST (resource-oriented)
+
+L'approche classique : chaque ressource (entrées, indicateurs, affectations) est exposée via un endpoint dédié avec les verbes HTTP standards (GET, POST, PATCH, DELETE).
+
+| Avantage | Inconvénient |
+|---|---|
+| Standard universel, très bien outillé (DRF, Swagger) | Over-fetching : le client reçoit tous les champs même s'il n'en utilise que deux |
+| Cache HTTP natif (ETag, Cache-Control) | Under-fetching : pour un écran mobile complexe, il faut souvent 2-3 appels séparés |
+| Documentation auto-générée (drf-spectacular) | Pas de typage fort côté client sans génération de code |
+| Écosystème Django/DRF mature et éprouvé | Évolution des endpoints = gestion du versioning |
+
+#### Option 2 — GraphQL (query-oriented)
+
+Le client décrit exactement les données dont il a besoin dans une requête unique. Particulièrement adapté aux applications mobiles où la bande passante et le nombre de requêtes comptent.
+
+| Avantage | Inconvénient |
+|---|---|
+| Pas d'over-fetching ni d'under-fetching | Complexité accrue côté serveur (résolveurs, N+1, sécurité) |
+| Un seul endpoint, le client compose ses requêtes | Pas de cache HTTP natif (tout passe par POST) |
+| Idéal pour les apps mobiles multi-écrans | Écosystème Django/GraphQL moins mature que DRF |
+| Typage fort via le schéma GraphQL | Courbe d'apprentissage + surcoût d'implémentation |
+
+#### Option 3 — gRPC / RPC (action-oriented)
+
+Appels de procédure à distance avec contrats Protobuf. Ultra-performant, adapté au server-to-server.
+
+| Avantage | Inconvénient |
+|---|---|
+| Très performant (binaire, HTTP/2, streaming) | Pas adapté aux navigateurs web (nécessite gRPC-Web) |
+| Contrat fort via Protobuf | Outillage Django quasi inexistant |
+| Idéal pour microservices internes | Pas de documentation interactive (pas de Swagger) |
+
+#### Décision : REST maintenant, architecture prête pour GraphQL
+
+**Pour le MVP (3 jours, solo, cahier des charges évaluable)** : REST avec DRF est le choix rationnel.
+
+**Justification** :
+
+1. **Contrainte du cahier des charges** : l'exigence de documentation API (Swagger/OpenAPI) et d'endpoints sécurisés pointe explicitement vers REST. Le formateur s'attend à voir des endpoints HTTP classiques avec des contrats entrée/sortie documentés.
+2. **Productivité** : DRF est déjà configuré dans le projet (settings, simplejwt, drf-spectacular). Basculer sur GraphQL (Strawberry ou Graphene) impliquerait de reconfigurer l'authentification, la documentation et les permissions — du temps investi dans la plomberie plutôt que dans la valeur métier.
+3. **Testabilité** : DRF fournit `APIClient` pour les tests d'intégration. Le plan de tests (section 3 du PLAN_DE_TESTS.md) est déjà rédigé avec des endpoints REST. Le conserver évite de réécrire 21 tests d'intégration + 10 tests de sécurité.
+4. **Évaluation** : REST est le standard attendu dans un contexte de formation back-end. Démontrer la maîtrise de REST (pagination, filtrage, permissions, gestion d'erreurs, versioning) est plus démonstratif qu'un GraphQL partiel.
+
+**Cependant**, l'observation est pertinente : pour une application mobile de suivi bien-être, GraphQL serait un meilleur choix en production. L'écran "dashboard patient" nécessiterait en REST 3 appels (entrées récentes + tendance 7j + tendance 30j), tandis qu'en GraphQL une seule requête suffirait.
+
+#### Préparation pour une couche GraphQL future
+
+L'architecture hexagonale de ZenLog rend l'ajout futur d'un gateway GraphQL trivial, car les services domaine sont déjà découplés de la couche de transport :
+
+```
+                    ┌─────────────────────────────────────┐
+                    │     Driving Adapters (input ports)    │
+                    │                                       │
+                    │  ┌─────────────┐  ┌───────────────┐  │
+                    │  │  REST / DRF  │  │  GraphQL       │  │
+                    │  │  (MVP, v1)   │  │  (futur, v2)   │  │
+                    │  └──────┬───────┘  └──────┬────────┘  │
+                    └─────────┼─────────────────┼───────────┘
+                              │                 │
+                              ▼                 ▼
+                    ┌─────────────────────────────────────┐
+                    │         Domain Services               │
+                    │  TrackingService · CoachingService     │
+                    │  (inchangés, framework-agnostic)       │
+                    └─────────────────────────────────────┘
+```
+
+Concrètement, un futur adapter GraphQL (avec Strawberry-Django par exemple) appellerait les mêmes méthodes de service que les viewsets DRF :
+
+```python
+# Futur : strawberry resolver (v2)
+@strawberry.type
+class Query:
+    @strawberry.field
+    def my_entries(self, info) -> list[WellnessEntryType]:
+        service = TrackingService(entry_repo=..., indicator_repo=...)
+        return service.get_history(patient_id=info.context.user.id)
+```
+
+**Ce qui ne change pas** : les entités, les services, les ports, les repositories. Seule une nouvelle couche de « transport » s'ajoute. C'est le bénéfice concret de l'architecture hexagonale documentée en §4.6.
+
+---
+
+### 7.2 Contrats d'API — Endpoints, verbes et réponses
+
+Les endpoints suivent les conventions REST standards. Chaque endpoint est rattaché à une user story du cahier des charges (§3 du CDC).
+
+#### 7.2.1 Authentification (`/api/auth/`)
+
+| Méthode | Endpoint | US | Description | Auth requise |
+|---|---|---|---|---|
+| POST | `/api/auth/register/` | AUTH-1 | Inscription (email + password + role) | Non |
+| POST | `/api/auth/token/` | AUTH-2 | Connexion → access + refresh tokens | Non |
+| POST | `/api/auth/token/refresh/` | AUTH-2 | Renouveler l'access token | Non (refresh token dans le body) |
+
+#### 7.2.2 Wellness Tracking (`/api/wellness/`)
+
+| Méthode | Endpoint | US | Description | Auth | Rôle |
+|---|---|---|---|---|---|
+| GET | `/api/wellness/indicators/` | US-5 | Lister les indicateurs actifs | Oui | Tous |
+| POST | `/api/wellness/indicators/` | US-5 | Créer un indicateur | Oui | Admin |
+| GET | `/api/wellness/entries/` | US-3 | Lister mes entrées (filtrage, pagination) | Oui | Patient |
+| POST | `/api/wellness/entries/` | US-1 | Saisir une entrée du jour | Oui | Patient |
+| GET | `/api/wellness/entries/{id}/` | US-3 | Détail d'une entrée (propriétaire uniquement) | Oui | Patient |
+| PATCH | `/api/wellness/entries/{id}/` | US-2 | Modifier une entrée (propriétaire uniquement) | Oui | Patient |
+| GET | `/api/wellness/trends/` | US-4 | Tendances 7j/30j (query param `?period=7`) | Oui | Patient |
+
+#### 7.2.3 Coaching (`/api/coaching/`)
+
+| Méthode | Endpoint | US | Description | Auth | Rôle |
+|---|---|---|---|---|---|
+| GET | `/api/coaching/patients/` | US-7 | Mes patients (affectations actives) | Oui | Coach |
+| GET | `/api/coaching/patients/{id}/entries/` | US-6 | Entrées d'un patient (lecture seule) | Oui | Coach |
+| GET | `/api/coaching/assignments/` | US-8 | Lister les affectations | Oui | Admin |
+| POST | `/api/coaching/assignments/` | US-8 | Créer une affectation | Oui | Admin |
+| PATCH | `/api/coaching/assignments/{id}/` | US-9 | Désactiver une affectation | Oui | Admin |
+
+#### 7.2.4 Conventions transversales
+
+**Pagination** : `PageNumberPagination` (DRF), 20 résultats par page (configurable via `?page_size=`).
+
+```json
+{
+  "count": 142,
+  "next": "https://api.zenlog.app/api/wellness/entries/?page=2",
+  "previous": null,
+  "results": [...]
+}
+```
+
+**Filtrage** : query parameters standards sur les endpoints de liste.
+
+- `/api/wellness/entries/?indicator_id=<uuid>&date_from=2026-03-01&date_to=2026-03-20`
+- `/api/wellness/trends/?period=7&indicator_id=<uuid>`
+
+**Gestion des erreurs** : réponses JSON structurées avec codes HTTP sémantiques.
+
+| Code | Usage |
+|---|---|
+| 200 | Succès (GET, PATCH) |
+| 201 | Création réussie (POST) |
+| 400 | Erreur de validation (valeur hors plage, doublon, champs manquants) |
+| 401 | Non authentifié (token absent ou expiré) |
+| 403 | Non autorisé (rôle insuffisant, pas d'affectation active) |
+| 404 | Ressource inexistante (ou accès interdit déguisé pour ne pas révéler l'existence) |
+| 429 | Rate limiting (tentatives de login excessives) |
+
+**Sécurité des réponses** : le mot de passe hashé n'apparaît jamais dans les réponses JSON. Les données d'un patient ne sont jamais exposées à un autre patient (même en 404 plutôt que 403, pour ne pas révéler l'existence d'une ressource).
+
+---
+
+### 7.3 Architecture de la couche infrastructure — Du domaine à l'API
+
+Le câblage infrastructure suit le flux suivant :
+
+```
+HTTP Request
+    │
+    ▼
+┌──────────────────┐
+│  DRF Router/URLs  │  config/urls.py + infrastructure/urls.py
+└────────┬─────────┘
+         ▼
+┌──────────────────┐
+│  DRF ViewSet      │  infrastructure/views/
+│                   │  - Authentifie (JWT)
+│                   │  - Vérifie les permissions (IsPatient, IsCoach, IsAdmin)
+│                   │  - Désérialise l'input (serializer)
+│                   │  - Instancie le repository Django
+│                   │  - Appelle le service domaine
+│                   │  - Sérialise l'output
+└────────┬─────────┘
+         ▼
+┌──────────────────┐
+│  Domain Service   │  domain/services/
+│                   │  - Applique les guard clauses
+│                   │  - Orchestre la logique métier
+│                   │  - Appelle les ports abstraits
+└────────┬─────────┘
+         ▼
+┌──────────────────┐
+│  Django Repository│  infrastructure/repositories/
+│  (adapter)        │  - Traduit les appels ports → ORM Django
+│                   │  - Convertit Model ↔ Entity (mapping)
+└────────┬─────────┘
+         ▼
+┌──────────────────┐
+│  PostgreSQL       │
+└──────────────────┘
+```
+
+**Point clé — l'injection de dépendances dans les views** : la view est le point de composition où les repositories concrets sont instanciés et injectés dans les services. C'est le seul endroit du code qui connaît à la fois le domaine et l'infrastructure :
+
+```python
+# infrastructure/views/wellness_views.py (pattern d'injection)
+class WellnessEntryViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated, IsPatient]
+
+    def get_service(self) -> TrackingService:
+        return TrackingService(
+            entry_repo=DjangoWellnessEntryRepository(),
+            indicator_repo=DjangoIndicatorRepository(),
+        )
+
+    def create(self, request):
+        service = self.get_service()
+        serializer = CreateEntrySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        entry = service.create_entry(
+            patient_id=str(request.user.id),
+            **serializer.validated_data,
+        )
+        return Response(EntrySerializer(entry).data, status=201)
+```
+
+---
+
+### 7.4 Plan d'implémentation — Branches, commits et tests
+
+L'implémentation suit une progression **de l'intérieur vers l'extérieur** de l'hexagone, en 6 branches feature. Chaque branche suit le cycle TDD : tests d'abord (RED), implémentation (GREEN), refactor si nécessaire.
+
+#### Phase 1 — Modèles et persistance
+
+**Branche `feature/django-models`**
+
+Objectif : traduire le MCD en modèles Django, créer le User custom, générer les migrations.
+
+| # | Commit | Type | Contenu |
+|---|---|---|---|
+| 1 | `feat(infra): add custom User model with role field` | feat | Modèle `User` étendant `AbstractUser`, champ `role` (choices: patient/coach/admin), `AUTH_USER_MODEL` dans settings |
+| 2 | `feat(infra): add Indicator model` | feat | Modèle Django `Indicator` (uuid pk, name, unit, min_value, max_value, is_active, created_at), contrainte `unique` sur name |
+| 3 | `feat(infra): add WellnessEntry model` | feat | Modèle Django `WellnessEntry` (uuid pk, FK patient→User, FK indicator→Indicator, date, value, note, timestamps), contrainte `unique_together` sur (patient, indicator, date) |
+| 4 | `feat(infra): add Assignment model` | feat | Modèle Django `Assignment` (uuid pk, FK coach→User, FK patient→User, start_date, end_date, is_active, created_at) |
+| 5 | `chore(infra): generate initial migrations` | chore | `makemigrations` + vérification du SQL généré |
+
+Tests associés : aucun test unitaire à ce stade (les modèles sont de la plomberie ORM). Les modèles seront testés indirectement via les tests d'intégration des branches suivantes.
+
+---
+
+**Branche `feature/django-repositories`**
+
+Objectif : implémenter les adapters ORM qui satisfont les ports du domaine. C'est ici que l'architecture hexagonale se concrétise.
+
+| # | Commit | Type | Contenu |
+|---|---|---|---|
+| 1 | `test(infra): add repository integration tests` | test | Tests avec `pytest-django` et `TransactionTestCase` pour chaque repository : save, find_by_id, find_by_patient (avec filtres), exists. Utilise `factory-boy` pour générer les données. |
+| 2 | `feat(infra): implement DjangoWellnessEntryRepository` | feat | Classe implémentant `WellnessEntryRepository` + `PatientEntryReader`. Mapping Model ↔ Entity (méthodes `_to_entity()` / `_to_model()`). |
+| 3 | `feat(infra): implement DjangoIndicatorRepository` | feat | Implémente `IndicatorRepository`. |
+| 4 | `feat(infra): implement DjangoAssignmentRepository` | feat | Implémente `AssignmentRepository`. |
+
+Tests associés (RED avant chaque implémentation) :
+
+| ID test | Cible | Vérifie |
+|---|---|---|
+| T-R-01 | `DjangoWellnessEntryRepository.save()` | Entrée persistée et récupérable par `find_by_id()` |
+| T-R-02 | `DjangoWellnessEntryRepository.find_by_patient()` | Filtrage par patient_id, indicator_id, date_from, date_to |
+| T-R-03 | `DjangoWellnessEntryRepository.exists()` | True si triplet (patient, indicator, date) existe |
+| T-R-04 | `DjangoIndicatorRepository.find_all_active()` | Ne retourne que les indicateurs actifs |
+| T-R-05 | `DjangoAssignmentRepository.exists_active()` | True si affectation active coach↔patient |
+| T-R-06 | `DjangoAssignmentRepository.find_active_by_coach()` | Ne retourne que les affectations actives |
+
+---
+
+#### Phase 2 — Authentification et permissions
+
+**Branche `feature/auth-endpoints`**
+
+Objectif : endpoints d'inscription, connexion et refresh token. Permissions DRF par rôle.
+
+| # | Commit | Type | Contenu |
+|---|---|---|---|
+| 1 | `test(infra): add auth integration tests (T-I-01 to T-I-06)` | test | Tests d'intégration pour inscription, connexion, refresh, accès sans token |
+| 2 | `feat(infra): add registration endpoint` | feat | Vue `RegisterView` + serializer (email, password, role). Validation : email unique, mot de passe robuste (Django validators). |
+| 3 | `feat(infra): configure JWT endpoints` | feat | Routes SimpleJWT (`TokenObtainPairView`, `TokenRefreshView`) dans `infrastructure/urls.py`. |
+| 4 | `feat(infra): add role-based permissions` | feat | Classes `IsPatient`, `IsCoach`, `IsAdmin` dans `infrastructure/permissions/`. Chaque classe lit `request.user.role`. |
+| 5 | `test(infra): add security tests (T-S-01, T-S-02)` | test | Token absent → 401, token expiré → 401. |
+
+Tests associés : T-I-01 à T-I-06 + T-S-01, T-S-02 du plan de tests.
+
+---
+
+#### Phase 3 — Endpoints Wellness (cœur métier API)
+
+**Branche `feature/wellness-api`**
+
+Objectif : exposer les cas d'usage US-1 à US-5 via l'API REST. C'est la branche la plus importante — elle connecte le domaine à l'extérieur.
+
+| # | Commit | Type | Contenu |
+|---|---|---|---|
+| 1 | `test(infra): add wellness API integration tests (T-I-07 to T-I-13)` | test | Tests d'intégration pour création, doublon, liste, détail, modification, tendances, indicateurs. |
+| 2 | `feat(infra): add wellness serializers` | feat | `CreateEntrySerializer` (input), `EntrySerializer` (output), `TrendSerializer`, `IndicatorSerializer`. Validation DRF en complément des guard clauses domaine. |
+| 3 | `feat(infra): add WellnessEntryViewSet` | feat | ViewSet connectant les serializers aux services domaine. Injection des repositories Django. Permissions `IsPatient`. Filtrage par query params. |
+| 4 | `feat(infra): add TrendView` | feat | Vue dédiée pour `GET /api/wellness/trends/?period=7`. Appelle `TrackingService.compute_trend()`. |
+| 5 | `feat(infra): add IndicatorViewSet` | feat | ViewSet pour les indicateurs. GET = tous rôles, POST = `IsAdmin`. |
+| 6 | `feat(infra): wire wellness URLs` | feat | Routage DRF (`DefaultRouter`) dans `infrastructure/urls.py`, include dans `config/urls.py`. |
+| 7 | `test(infra): add security tests (T-S-03 to T-S-05, T-S-08)` | test | Escalade patient→admin, accès données autre patient, injection SQL. |
+
+Tests associés : T-I-07 à T-I-13 + T-S-03, T-S-04, T-S-05, T-S-08 du plan de tests.
+
+---
+
+#### Phase 4 — Endpoints Coaching
+
+**Branche `feature/coaching-api`**
+
+Objectif : exposer les cas d'usage US-6 à US-9 via l'API REST.
+
+| # | Commit | Type | Contenu |
+|---|---|---|---|
+| 1 | `test(infra): add coaching API integration tests (T-I-14 to T-I-21)` | test | Tests pour liste patients, données patient, accès refusé, coach tente d'écrire, CRUD admin affectations. |
+| 2 | `feat(infra): add coaching serializers` | feat | `AssignmentSerializer`, `PatientListSerializer`, `PatientEntrySerializer`. |
+| 3 | `feat(infra): add CoachingViewSet` | feat | ViewSet coach : liste patients (appelle `CoachingService.get_patient_list()`), données patient (appelle `get_patient_data()`). Permissions `IsCoach`. |
+| 4 | `feat(infra): add AssignmentViewSet` | feat | ViewSet admin : CRUD affectations. Permissions `IsAdmin`. Désactivation via PATCH (appelle `Assignment.deactivate()`). |
+| 5 | `feat(infra): wire coaching URLs` | feat | Routage DRF, include dans `config/urls.py`. |
+| 6 | `test(infra): add security tests (T-S-04, T-S-06, T-S-07)` | test | Coach tente d'écrire, coach sans affectation, affectation inactive. |
+
+Tests associés : T-I-14 à T-I-21 + T-S-04, T-S-06, T-S-07 du plan de tests.
+
+---
+
+#### Phase 5 — Sécurité et hardening
+
+**Branche `feature/security-hardening`**
+
+Objectif : rate limiting, logging des accès, protection RGPD, tests de sécurité finaux.
+
+| # | Commit | Type | Contenu |
+|---|---|---|---|
+| 1 | `feat(infra): add rate limiting on auth endpoints` | feat | `django-ratelimit` ou throttle DRF sur `/api/auth/token/` (10 tentatives/min). |
+| 2 | `feat(infra): add access logging middleware` | feat | Middleware Django loguant les accès aux données de santé (qui, quoi, quand). |
+| 3 | `feat(infra): mask sensitive fields in API responses` | feat | Vérification que `password_hash` n'apparaît jamais. Serializer User sans champs sensibles. |
+| 4 | `test(infra): add final security tests (T-S-09, T-S-10)` | test | Mot de passe non exposé, rate limiting effectif. |
+
+Tests associés : T-S-09, T-S-10 du plan de tests.
+
+---
+
+#### Phase 6 — Documentation et Swagger
+
+**Branche `feature/api-documentation`**
+
+Objectif : documentation OpenAPI complète et fonctionnelle.
+
+| # | Commit | Type | Contenu |
+|---|---|---|---|
+| 1 | `feat(infra): configure Swagger UI and ReDoc routes` | feat | Routes `/api/docs/` (Swagger UI) et `/api/redoc/` (ReDoc) via drf-spectacular. |
+| 2 | `docs(infra): add OpenAPI annotations to all views` | docs | `@extend_schema()` sur chaque vue : descriptions, exemples de requêtes/réponses, tags par BC. |
+| 3 | `docs: update README with API quickstart` | docs | Instructions de lancement, exemples curl pour les endpoints principaux. |
+
+---
+
+### 7.5 Synthèse — Vue d'ensemble des branches
+
+```
+main (stable, déployable)
+│
+├── feature/django-models              ← Phase 1 : BDD
+│   └── 5 commits (models + migrations)
+│   └── PR → merge
+│
+├── feature/django-repositories        ← Phase 1 : Adapters ORM
+│   └── 4 commits (TDD : tests puis implémentation)
+│   └── PR → merge
+│
+├── feature/auth-endpoints             ← Phase 2 : Auth + Permissions
+│   └── 5 commits (TDD : T-I-01→T-I-06, T-S-01, T-S-02)
+│   └── PR → merge
+│
+├── feature/wellness-api               ← Phase 3 : Cœur API
+│   └── 7 commits (TDD : T-I-07→T-I-13, T-S-03→T-S-05, T-S-08)
+│   └── PR → merge
+│
+├── feature/coaching-api               ← Phase 4 : API Coaching
+│   └── 6 commits (TDD : T-I-14→T-I-21, T-S-04, T-S-06, T-S-07)
+│   └── PR → merge
+│
+├── feature/security-hardening         ← Phase 5 : Sécurité
+│   └── 4 commits (T-S-09, T-S-10)
+│   └── PR → merge
+│
+└── feature/api-documentation          ← Phase 6 : Swagger + README
+    └── 3 commits
+    └── PR → merge
+```
+
+**Total** : 6 branches, 34 commits, 31 tests d'intégration alignés sur le plan de tests existant (T-I-01 à T-I-21 + T-S-01 à T-S-10).
+
+### 7.6 Couverture des tests — Mapping plan de tests ↔ branches
+
+| Phase | Branche | Tests unitaires domaine | Tests intégration API | Tests sécurité |
+|---|---|---|---|---|
+| Phase 1a | `feature/django-models` | — | — | — |
+| Phase 1b | `feature/django-repositories` | — | T-R-01 à T-R-06 (nouveaux) | — |
+| Phase 2 | `feature/auth-endpoints` | — | T-I-01 à T-I-06 | T-S-01, T-S-02 |
+| Phase 3 | `feature/wellness-api` | existants (24) | T-I-07 à T-I-13 | T-S-03, T-S-04, T-S-05, T-S-08 |
+| Phase 4 | `feature/coaching-api` | existants (24) | T-I-14 à T-I-21 | T-S-04, T-S-06, T-S-07 |
+| Phase 5 | `feature/security-hardening` | — | — | T-S-09, T-S-10 |
+| Phase 6 | `feature/api-documentation` | — | — | — |
+
+**Bilan final attendu** : 24 tests domaine (existants) + 6 tests repository + 21 tests intégration API + 10 tests sécurité = **61 tests au total**.
