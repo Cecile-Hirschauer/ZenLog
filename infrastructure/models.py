@@ -38,3 +38,65 @@ class User(AbstractUser):
 
     def __str__(self):
         return f"{self.email} ({self.role})"
+    
+    
+class Indicator(models.Model):
+    """A wellness metric that patients can track (e.g., mood, sleep).
+
+    Maps to the domain entity domain.entities.indicator.Indicator.
+    Managed by admins only. Patients select from active indicators.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100, unique=True)
+    unit = models.CharField(max_length=20)
+    min_value = models.FloatField()
+    max_value = models.FloatField()
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "wellness_indicator"
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.name} ({self.unit})"
+    
+    
+class WellnessEntry(models.Model):
+    """A daily wellness measurement recorded by a patient.
+
+    Maps to the domain entity domain.entities.wellness_entry.WellnessEntry.
+    Enforces one entry per patient per indicator per day via unique constraint.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    patient = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="wellness_entries",
+        limit_choices_to={"role": User.Role.PATIENT},
+    )
+    indicator = models.ForeignKey(
+        Indicator,
+        on_delete=models.PROTECT,
+        related_name="entries",
+    )
+    date = models.DateField()
+    value = models.FloatField()
+    note = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "wellness_entry"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["patient", "indicator", "date"],
+                name="unique_entry_per_patient_indicator_date",
+            ),
+        ]
+        ordering = ["-date", "-created_at"]
+
+    def __str__(self):
+        return f"{self.patient_id} - {self.indicator.name} - {self.date}"
