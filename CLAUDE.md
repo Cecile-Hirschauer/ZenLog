@@ -52,7 +52,7 @@ Requires PostgreSQL. Configure via `.env` file (see `.env.example`):
 ### Domain layer (`domain/`) — Pure Python, zero Django imports
 - **`entities/`** — Dataclasses: `Indicator`, `WellnessEntry`, `Assignment`, `Trend` (value object)
 - **`services/`** — Business logic: `TrackingService` (entry CRUD, trends), `CoachingService` (coach access control, patient data)
-- **`ports/`** — Abstract repository interfaces (ABC): `WellnessEntryRepository`, `IndicatorRepository`, `AssignmentRepository`
+- **`ports/`** — Abstract interfaces (ABC): `WellnessEntryRepository`, `IndicatorRepository`, `AssignmentRepository`, `PatientEntryReader` (read-only port for Coaching BC)
 
 ### Infrastructure layer (`infrastructure/`) — Django/DRF adapters
 - **`models.py`** — Django ORM models (implements DB schema from `zenlog_doc/MCD.mermaid`)
@@ -63,8 +63,9 @@ Requires PostgreSQL. Configure via `.env` file (see `.env.example`):
 - **`urls.py`** — API routing
 
 ### Two Bounded Contexts
-1. **Wellness Tracking** (core) — Patient entry creation, validation (value in indicator range, one entry per indicator per day), history, trend computation
-2. **Coaching** — Coach read-only access conditioned on active `Assignment`; admin manages assignments
+
+1. **Wellness Tracking** (core) — Patient entry creation, validation (value in indicator range, one entry per indicator per day), history, trend computation. Owns `WellnessEntryRepository` and `IndicatorRepository`.
+2. **Coaching** — Coach read-only access conditioned on active `Assignment`; admin manages assignments. Accesses patient data through `PatientEntryReader` (read-only port), never through `WellnessEntryRepository` directly — this enforces read-only at the domain level (Interface Segregation).
 
 ### Key domain rules
 - One wellness entry per patient per indicator per day (uniqueness invariant)
