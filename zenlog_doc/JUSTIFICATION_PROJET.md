@@ -253,6 +253,10 @@ ZenLog/                            # Racine du repo
 │   ├── entities/                  # Entités et value objects
 │   ├── services/                  # Services métier (use cases)
 │   └── ports/                     # Interfaces abstraites (ABC)
+│       ├── wellness_entry_repository.py
+│       ├── indicator_repository.py
+│       ├── assignment_repository.py
+│       └── patient_entry_reader.py   # Port read-only (BC Coaching)
 │
 ├── infrastructure/                # INFRASTRUCTURE — app Django
 │   ├── models.py                  # ORM models (implémentation BDD)
@@ -390,7 +394,7 @@ Le domaine ZenLog se décompose en **deux bounded contexts métier** et un **con
 | US-8 | Affecter un coach à un patient | Admin | Gestion des affectations |
 | US-9 | Désactiver une affectation | Admin | Révocation d'accès |
 
-**Relation entre BC 1 et BC 2** : Le BC 2 consomme les données du BC 1 via un **contrat d'interface** (port). Il ne dépend jamais directement des entités internes du BC 1 — il utilise une projection (lecture seule) exposée par le BC 1.
+**Relation entre BC 1 et BC 2** : Le BC 2 consomme les données du BC 1 via un **contrat d'interface read-only** (`PatientEntryReader`). Il ne dépend jamais directement des entités internes ni du repository complet du BC 1 — il utilise un port de lecture seule dédié, garantissant par le type que le coach ne peut jamais écrire de données (voir §5.2 pour le détail du refactoring ayant isolé ce contrat).
 
 ---
 
@@ -453,9 +457,10 @@ Le principe fondamental : **le domaine métier ne connaît pas Django**. Les cas
 │                                        └───────────────────┘  │
 │  ┌──────────────────────────────────────────────────────┐     │
 │  │  Output Ports (abstract interfaces)                   │     │
-│  │  • WellnessEntryRepository (ABC)                      │     │
-│  │  • IndicatorRepository (ABC)                          │     │
-│  │  • AssignmentRepository (ABC)                         │     │
+│  │  • WellnessEntryRepository (ABC)  — BC Tracking       │     │
+│  │  • IndicatorRepository (ABC)      — BC Tracking       │     │
+│  │  • AssignmentRepository (ABC)     — BC Coaching        │     │
+│  │  • PatientEntryReader (ABC)       — BC Coaching (R/O)  │     │
 │  └──────────────────────────────────────────────────────┘     │
 └──────────────────────────────────────────────────────────────┘
                                    │
@@ -485,7 +490,8 @@ zenlog/
 │   └── ports/                     # Abstract interfaces (contracts)
 │       ├── wellness_entry_repository.py  # ABC: save, find, filter entries
 │       ├── indicator_repository.py
-│       └── assignment_repository.py
+│       ├── assignment_repository.py
+│       └── patient_entry_reader.py       # ABC: read-only (BC Coaching)
 │
 ├── infrastructure/                # ADAPTERS — framework-dependent
 │   ├── django_models/             # Django ORM models (DB mapping)
@@ -503,3 +509,505 @@ zenlog/
 **Le bénéfice clé** : les tests du domaine (`tests/domain/`) ne nécessitent ni Django, ni base de données. On teste la logique métier pure avec des mocks simples des repositories. C'est exactement ce qu'attend le cahier des charges quand il demande de "bien séparer le code métier du code de dépendance".
 
 **Convention de nommage** : toute la documentation métier est rédigée en français, mais le code (classes, méthodes, variables, noms de fichiers) est systématiquement en anglais. La table du langage ubiquitaire (§4.1) fait le lien entre les deux.
+
+---
+
+## 5. Stratégie de refactoring
+
+Le refactoring est une étape essentielle du cycle TDD (Red-Green-**Refactor**). Dans ZenLog, chaque refactoring est traité comme un changement de premier ordre : branche dédiée, commits atomiques, tests au vert avant merge. Cette section documente les refactorings réalisés, leur motivation et leur impact sur l'architecture.
+
+### 5.1 Refactoring 1 — Docstrings et extraction de `_validate_value`
+
+**Branche** : `refactor/docstrings-extract-validate`
+
+**Problème identifié** :
+
+1. **Absence de docstrings** : les entités, services et ports du domaine ne contenaient aucune documentation inline. Pour un projet évalué sur sa qualité et sa maintenabilité, c'est un manque — un développeur découvrant le code ne peut pas comprendre l'intention de chaque classe ou méthode sans lire l'implémentation.
+2. **Duplication de la logique de validation** : la validation de la plage de valeurs (vérifier qu'une valeur est comprise entre `min_value` et `max_value` de l'indicateur) était dupliquée entre `create_entry()` et `update_entry()` dans `TrackingService`. Toute modification de la règle de validation impliquait de modifier deux endroits — source classique de bugs par oubli.
+
+**Solution** :
+
+- **Ajout de docstrings** sur toutes les entités (`WellnessEntry`, `Indicator`, `Assignment`, `Trend`), tous les services (`TrackingService`, `CoachingService`) et tous les ports (`WellnessEntryRepository`, `IndicatorRepository`, `AssignmentRepository`). Les docstrings documentent la responsabilité de la classe et le contrat de chaque méthode publique.
+- **Extraction de `_validate_value()`** : la logique de validation dupliquée est extraite dans une méthode privée `_validate_value(value, indicator)` du `TrackingService`. Les méthodes `create_entry()` et `update_entry()` appellent désormais cette méthode unique.
+
+**Principes appliqués** :
+
+- **DRY (Don't Repeat Yourself)** : l'extraction élimine la duplication. Un seul point de modification pour la règle de validation.
+- **Lisibilité** : les docstrings rendent le code auto-documenté. Chaque port expose son contrat explicitement, ce qui facilite l'implémentation future des adapters Django.
+
+**Impact** : aucun changement fonctionnel — les 24 tests existants passent sans modification. C'est un refactoring pur : le comportement observable est strictement identique, seule la structure interne s'améliore.
+
+---
+
+### 5.2 Refactoring 2 — Isolation du BC Coaching avec un port read-only (`PatientEntryReader`)
+
+**Branche** : `refactor/isolate-coaching-bc-read-port`
+
+#### Le problème
+
+`CoachingService` (BC Coaching) dépendait directement de `WellnessEntryRepository`, une interface du BC Wellness Tracking. Ce repository expose des méthodes d'écriture (`save()`, `exists()`, `find_by_id()`) alors que la règle métier est claire : **un coach ne fait que lire**. Le contrat de lecture seule n'existait que par convention dans le code — rien n'empêchait un développeur futur d'appeler `entry_repo.save()` depuis `CoachingService`.
+
+Ce couplage posait trois problèmes concrets :
+
+1. **Violation du principe de moindre privilège** : le service Coaching avait accès à des opérations qu'il ne devrait jamais utiliser. C'est l'équivalent de donner les clés de l'écriture à un rôle en lecture seule.
+2. **Couplage inter-BC non explicite** : le BC Coaching importait directement un port du BC Wellness Tracking, créant une dépendance structurelle invisible. Si le `WellnessEntryRepository` évoluait (ajout d'une méthode `delete()`), le BC Coaching y aurait accès implicitement.
+3. **Tests trompeurs** : les mocks injectés dans les tests exposaient `save()`, `exists()`, etc. — un développeur lisant les tests pouvait croire que le coach écrit des données.
+
+#### Le principe SOLID appliqué : Interface Segregation (ISP)
+
+Le **Interface Segregation Principle** (le « I » de SOLID) stipule qu'un client ne devrait pas être forcé de dépendre d'interfaces qu'il n'utilise pas. Ici, `CoachingService` n'utilise que `find_by_patient()` — il est donc forcé de dépendre d'une interface trop large. La solution est de créer une interface restreinte, taillée pour le besoin exact du client.
+
+#### Stratégie de refactoring pas-à-pas
+
+Le refactoring est découpé en **3 commits atomiques**, chacun isolé pour garder la traçabilité du raisonnement :
+
+**Commit 1 — Créer le nouveau port avant de toucher au code existant**
+
+On ajoute `PatientEntryReader` dans `domain/ports/` : une interface ABC exposant uniquement `find_by_patient()`. Aucun fichier existant n'est modifié. À ce stade, le port existe mais n'est pas encore utilisé.
+
+```python
+class PatientEntryReader(ABC):
+    """Port read-only pour le BC Coaching.
+
+    Expose uniquement la lecture des entrées d'un patient.
+    Aucune méthode d'écriture n'est disponible.
+    """
+
+    @abstractmethod
+    def find_by_patient(self, patient_id: str) -> list[WellnessEntry]:
+        pass
+```
+
+**Pourquoi un commit séparé ?** Ajouter sans modifier permet de valider l'interface en isolation. Si le port est mal conçu, on le corrige avant qu'il ne soit utilisé. Le risque est nul à cette étape.
+
+**Commit 2 — Basculer le service sur le nouveau port**
+
+On remplace la dépendance dans `CoachingService` :
+
+| Avant | Après |
+|---|---|
+| `entry_repo: WellnessEntryRepository` | `entry_reader: PatientEntryReader` |
+| Accès à `save()`, `exists()`, `find_by_id()`, `find_by_patient()` | Accès uniquement à `find_by_patient()` |
+
+Les tests cassent volontairement à cette étape — les fixtures utilisent encore l'ancien nom `entry_repo`. C'est assumé et documenté : on modifie le contrat du service sans toucher aux tests, pour garder un commit focalisé sur un seul changement.
+
+**Pourquoi laisser les tests casser ?** Un commit qui casse les tests peut sembler contre-intuitif. Mais ici, c'est un choix délibéré de traçabilité : le commit 2 montre exactement ce qui change dans le code de production. Le commit 3, immédiatement après, répare les tests. Cette séparation rend le diff lisible et le raisonnement auditable.
+
+**Commit 3 — Adapter les tests pour restaurer le vert**
+
+Mise à jour des fixtures (`entry_repo` → `entry_reader`) et des assertions dans `test_coaching_service.py`. Résultat : **24/24 tests passent, zéro régression**.
+
+#### Pourquoi cette approche pas-à-pas plutôt qu'un seul commit ?
+
+- **Chaque commit compile ou échoue de manière prévisible** — pas de gros commit « je change tout d'un coup » où on ne sait plus ce qui a cassé quoi.
+- **Le commit 2 casse les tests intentionnellement** — c'est documenté et attendu. Le commit 3 les répare immédiatement. Ça montre que le refactoring est maîtrisé, pas subi.
+- **On peut revert chirurgicalement** — si le port s'avère mal dimensionné, on revert les commits 2+3 et le port reste disponible sans impact sur le code existant.
+
+#### Ce que ça change concrètement
+
+| Avant | Après |
+|---|---|
+| `CoachingService` voit `save()`, `exists()`, `find_by_id()` | Ne voit que `find_by_patient()` |
+| La lecture seule est une convention d'équipe | La lecture seule est **garantie par le type** |
+| Couplage direct BC Coaching → port du BC Wellness Tracking | BC Coaching a son propre port, le contrat inter-BC est explicite |
+
+#### Impact sur l'architecture
+
+Le diagramme des ports du domaine évolue :
+
+```
+domain/ports/
+├── wellness_entry_repository.py   # BC Wellness Tracking — lecture + écriture
+├── indicator_repository.py        # BC Wellness Tracking — gestion des indicateurs
+├── assignment_repository.py       # BC Coaching — gestion des affectations
+└── patient_entry_reader.py        # BC Coaching — lecture seule des entrées (NEW)
+```
+
+**Impact côté infrastructure (futur)** : quand les repositories Django seront implémentés, l'adapter pourra satisfaire les deux interfaces avec une seule classe grâce à l'héritage multiple de Python :
+
+```python
+class DjangoWellnessEntryRepository(WellnessEntryRepository, PatientEntryReader):
+    """Implémente les deux ports avec le même ORM Django."""
+
+    def save(self, entry): ...
+    def find_by_patient(self, patient_id): ...
+    def find_by_id(self, entry_id): ...
+    def exists(self, patient_id, indicator_id, date): ...
+```
+
+Une seule classe, deux contrats : le `TrackingService` reçoit l'instance typée `WellnessEntryRepository`, le `CoachingService` reçoit la même instance typée `PatientEntryReader`. Chacun ne voit que ce que son type autorise.
+
+---
+
+### 5.3 Synthèse — Principes de refactoring appliqués dans ZenLog
+
+| Principe | Refactoring 1 | Refactoring 2 |
+|---|---|---|
+| **DRY** | Extraction de `_validate_value()` | — |
+| **Interface Segregation (SOLID)** | — | Création de `PatientEntryReader` |
+| **Moindre privilège** | — | Le coach ne voit que `find_by_patient()` |
+| **Commits atomiques** | 1 commit ciblé | 3 commits traçables |
+| **Zéro régression** | 24/24 tests ✅ | 24/24 tests ✅ |
+| **Séparation des préoccupations** | Docstrings vs. logique | Contrat inter-BC explicite |
+
+**Méthodologie commune** : chaque refactoring suit le même protocole — branche dédiée, commits atomiques avec messages conventionnels (`refactor(scope): description`), exécution complète des tests avant merge, et PR documentée. Le refactoring n'est jamais un « bonus » — c'est la troisième étape du cycle TDD, traitée avec la même rigueur que le Red et le Green.
+
+---
+
+## 6. Design patterns identifiés et justifications
+
+Cette section recense les design patterns mis en œuvre dans ZenLog, leur localisation dans le code, et la justification métier ou architecturale de chacun. Chaque pattern répond à un besoin concret — aucun n'est utilisé « pour faire joli ».
+
+### 6.1 Repository Pattern
+
+**Catégorie** : Pattern structurel (accès aux données)
+
+**Localisation** : `domain/ports/wellness_entry_repository.py`, `domain/ports/indicator_repository.py`, `domain/ports/assignment_repository.py`, `domain/ports/patient_entry_reader.py`
+
+**Implémentation** : chaque repository est défini comme une classe abstraite (ABC) dans `domain/ports/`. L'interface expose les opérations de persistance (`save()`, `find_by_id()`, `find_by_patient()`, `exists()`) sans révéler le mécanisme de stockage sous-jacent.
+
+```python
+# domain/ports/wellness_entry_repository.py
+class WellnessEntryRepository(ABC):
+    @abstractmethod
+    def save(self, entry: WellnessEntry) -> WellnessEntry:
+        pass
+
+    @abstractmethod
+    def find_by_id(self, entry_id: str) -> WellnessEntry | None:
+        pass
+
+    @abstractmethod
+    def find_by_patient(self, patient_id: str, ...) -> list[WellnessEntry]:
+        pass
+
+    @abstractmethod
+    def exists(self, patient_id: str, indicator_id: str, date: date) -> bool:
+        pass
+```
+
+**Justification** :
+
+1. **Découplage domaine/persistance** : les services métier (`TrackingService`, `CoachingService`) n'importent jamais Django, SQLAlchemy ou PostgreSQL. Ils appellent des méthodes abstraites dont l'implémentation concrète est injectée à l'exécution. Si demain on remplace PostgreSQL par MongoDB, seul le dossier `infrastructure/repositories/` change — le domaine reste intact.
+2. **Testabilité** : en tests unitaires, on injecte des `MagicMock()` à la place des repositories réels. Les 24 tests du domaine s'exécutent sans base de données, sans `django.setup()`, en pur pytest. Le temps d'exécution des tests reste minimal même si la base de données de production est lente ou indisponible.
+3. **Contrat explicite** : chaque repository définit précisément les opérations disponibles. Un développeur implémentant l'adapter Django sait exactement quelles méthodes fournir — le compilateur (ou mypy) vérifie la conformité.
+
+---
+
+### 6.2 Dependency Injection (injection de dépendances par constructeur)
+
+**Catégorie** : Pattern de création / inversion de contrôle
+
+**Localisation** : `domain/services/tracking_service.py` (lignes 18-24), `domain/services/coaching_service.py` (lignes 13-19)
+
+**Implémentation** : les services reçoivent leurs dépendances via le constructeur (`__init__`), typées par les interfaces abstraites. Aucun service n'instancie lui-même ses repositories.
+
+```python
+# domain/services/tracking_service.py
+class TrackingService:
+    def __init__(
+        self,
+        entry_repo: WellnessEntryRepository,
+        indicator_repo: IndicatorRepository,
+    ):
+        self.entry_repo = entry_repo
+        self.indicator_repo = indicator_repo
+```
+
+```python
+# domain/services/coaching_service.py
+class CoachingService:
+    def __init__(
+        self,
+        assignment_repo: AssignmentRepository,
+        entry_reader: PatientEntryReader,
+    ):
+        self.assignment_repo = assignment_repo
+        self.entry_reader = entry_reader
+```
+
+**Justification** :
+
+1. **Principe d'inversion des dépendances (DIP — SOLID)** : les modules de haut niveau (services) dépendent d'abstractions (ports ABC), pas de modules de bas niveau (Django ORM). La direction de la dépendance est inversée : c'est l'infrastructure qui s'adapte au domaine, pas l'inverse.
+2. **Testabilité maximale** : en test, on passe des mocks ; en production, on passera les repositories Django. Le service ne sait pas — et n'a pas besoin de savoir — à qui il parle.
+3. **Flexibilité de composition** : on peut recombiner les services avec des implémentations différentes (cache, API externe, repository en mémoire) sans modifier une seule ligne du domaine.
+
+```python
+# Exemple en test : injection de mocks
+@pytest.fixture
+def service(entry_repo, indicator_repo):
+    return TrackingService(
+        entry_repo=entry_repo,         # MagicMock
+        indicator_repo=indicator_repo,  # MagicMock
+    )
+```
+
+---
+
+### 6.3 Service Pattern (Domain Service)
+
+**Catégorie** : Pattern DDD (Domain-Driven Design)
+
+**Localisation** : `domain/services/tracking_service.py`, `domain/services/coaching_service.py`
+
+**Implémentation** : la logique métier qui ne relève pas d'une seule entité est encapsulée dans des services dédiés. Chaque service a une responsabilité unique (Single Responsibility Principle) :
+
+- **`TrackingService`** : orchestration des opérations de suivi bien-être — création d'entrée (avec vérification d'unicité et validation de plage), mise à jour (avec vérification de propriété), calcul de tendance.
+- **`CoachingService`** : contrôle d'accès coach → patient — vérification d'affectation active, récupération de la liste de patients, lecture des données patient en mode read-only.
+
+**Justification** :
+
+1. **Séparation des préoccupations** : la règle « un patient ne peut saisir qu'une entrée par indicateur et par jour » implique une coordination entre le repository d'entrées et celui des indicateurs. Cette logique n'appartient ni à `WellnessEntry` ni à `Indicator` — elle appartient au service qui orchestre les deux.
+
+```python
+# TrackingService.create_entry() — coordination de deux repositories
+def create_entry(self, patient_id, indicator_id, entry_date, value, note=None):
+    if self.entry_repo.exists(patient_id, indicator_id, entry_date):
+        raise ValueError("Entry already exists...")
+    indicator = self.indicator_repo.find_by_id(indicator_id)
+    self._validate_value(value, indicator)
+    entry = WellnessEntry(id=str(uuid.uuid4()), ...)
+    return self.entry_repo.save(entry)
+```
+
+2. **Indépendance du framework** : les services sont du Python pur. Ils ne connaissent ni Django, ni DRF, ni HTTP. Les contrôleurs futurs (viewsets DRF) se contenteront d'appeler les méthodes du service et de sérialiser le résultat. Cette séparation est vérifiable : les tests dans `tests/domain/` s'exécutent sans `django.setup()`.
+3. **Testabilité** : chaque service est testable en isolation avec des mocks simples. Les 24 tests couvrent les chemins nominaux et les cas d'erreur (valeur hors plage, doublon, accès non autorisé).
+
+---
+
+### 6.4 Entity Pattern
+
+**Catégorie** : Pattern DDD
+
+**Localisation** : `domain/entities/wellness_entry.py`, `domain/entities/indicator.py`, `domain/entities/assignment.py`
+
+**Implémentation** : les entités sont des `@dataclass` Python possédant une identité (`id`) et des méthodes métier encapsulant les règles propres à l'entité.
+
+```python
+# domain/entities/wellness_entry.py
+@dataclass
+class WellnessEntry:
+    id: str
+    patient_id: str
+    indicator_id: str
+    date: date
+    value: float
+    note: str | None = None
+
+    def is_owned_by(self, patient_id: str) -> bool:
+        return self.patient_id == patient_id
+```
+
+```python
+# domain/entities/indicator.py
+@dataclass
+class Indicator:
+    id: str
+    name: str
+    unit: str
+    min_value: float
+    max_value: float
+    is_active: bool = True
+
+    def is_value_in_range(self, value: float) -> bool:
+        return self.min_value <= value <= self.max_value
+```
+
+```python
+# domain/entities/assignment.py
+@dataclass
+class Assignment:
+    id: str
+    coach_id: str
+    patient_id: str
+    start_date: date
+    is_active: bool = True
+    end_date: date | None = None
+
+    def is_currently_active(self) -> bool:
+        return self.is_active
+
+    def deactivate(self, end_date: date) -> None:
+        self.is_active = False
+        self.end_date = end_date
+```
+
+**Justification** :
+
+1. **Encapsulation des règles métier** : la vérification de propriété (`is_owned_by`), la validation de plage (`is_value_in_range`) et la gestion du cycle de vie (`deactivate`) sont co-localisées avec les données qu'elles protègent. Un développeur ne peut pas oublier ces règles — elles font partie de l'entité.
+2. **Identité vs. valeur** : les entités sont identifiées par un `id` unique et possèdent un cycle de vie (création, modification, désactivation). Cette distinction est fondamentale en DDD pour différencier ce qui est suivi dans le temps (entités) de ce qui est calculé à la volée (value objects, voir §6.5).
+3. **Indépendance du framework** : les entités sont de pures `@dataclass` Python sans import Django. Elles ne sont pas des modèles ORM — la correspondance entité ↔ table sera gérée par les repositories dans la couche infrastructure.
+
+---
+
+### 6.5 Value Object Pattern
+
+**Catégorie** : Pattern DDD
+
+**Localisation** : `domain/entities/trend.py`
+
+**Implémentation** : `Trend` est une `@dataclass` sans identité propre (pas de champ `id`), représentant un résultat de calcul agrégé.
+
+```python
+# domain/entities/trend.py
+@dataclass
+class Trend:
+    patient_id: str
+    indicator_id: str
+    period_days: int
+    average: float | None
+    entry_count: int
+```
+
+**Justification** :
+
+1. **Aucune persistance nécessaire** : une tendance est calculée à la volée par `TrackingService.compute_trend()` à partir des entrées existantes. La stocker en base serait de la dénormalisation prématurée — elle se recalcule instantanément.
+2. **Immuabilité sémantique** : un `Trend` n'a pas de cycle de vie. Deux tendances avec les mêmes attributs sont interchangeables. Cette propriété distingue clairement les value objects des entités dans le modèle DDD.
+3. **Contrat de retour explicite** : plutôt que de renvoyer un dictionnaire ou un tuple anonyme, `compute_trend()` renvoie un objet typé. Le consommateur sait exactement quels champs sont disponibles (`average`, `entry_count`, `period_days`).
+
+---
+
+### 6.6 Ports & Adapters (Architecture Hexagonale)
+
+**Catégorie** : Pattern architectural
+
+**Localisation** : architecture globale du projet — `domain/` (hexagone) vs. `infrastructure/` (adapters)
+
+**Implémentation** : le projet est structuré en deux packages racine au même niveau :
+
+- **`domain/`** : contient les entités, services et ports. Zéro import Django. C'est le cœur applicatif.
+- **`infrastructure/`** : contient l'application Django (models, views, serializers, repositories). C'est l'adapter qui traduit les concepts du domaine vers les technologies concrètes (ORM, HTTP, JWT).
+
+**Justification** :
+
+1. **Le domaine dicte, la technique s'adapte** : l'architecture hexagonale inverse la dépendance classique où le code métier est prisonnier du framework. Ici, si Django disparaît demain, seul `infrastructure/` est impacté. La preuve : les tests du domaine s'exécutent en pur pytest, sans `django.setup()`.
+2. **Plusieurs adapters possibles** : la même logique métier peut être exposée via une API REST (DRF), une CLI, ou un worker Celery. Chacun est un « driving adapter » qui appelle les services du domaine. Côté persistance, on peut avoir un adapter Django ORM en production et un adapter mock en test — le service ne change pas.
+3. **Cohérence avec le cahier des charges** : l'exigence de « bien séparer le code métier du code de dépendance » est directement satisfaite par cette architecture. La séparation est physique (deux packages distincts), pas juste conceptuelle.
+
+---
+
+### 6.7 Interface Segregation Pattern
+
+**Catégorie** : Principe SOLID appliqué comme pattern structurel
+
+**Localisation** : `domain/ports/patient_entry_reader.py` vs. `domain/ports/wellness_entry_repository.py`
+
+**Implémentation** : le port `PatientEntryReader` expose uniquement `find_by_patient()` pour le BC Coaching, tandis que `WellnessEntryRepository` expose l'ensemble des opérations CRUD pour le BC Wellness Tracking.
+
+```python
+# domain/ports/patient_entry_reader.py — interface restreinte (BC Coaching)
+class PatientEntryReader(ABC):
+    @abstractmethod
+    def find_by_patient(self, patient_id: str, ...) -> list[WellnessEntry]:
+        pass
+```
+
+```python
+# domain/ports/wellness_entry_repository.py — interface complète (BC Tracking)
+class WellnessEntryRepository(ABC):
+    @abstractmethod
+    def save(self, entry: WellnessEntry) -> WellnessEntry: ...
+    @abstractmethod
+    def find_by_id(self, entry_id: str) -> WellnessEntry | None: ...
+    @abstractmethod
+    def find_by_patient(self, patient_id: str, ...) -> list[WellnessEntry]: ...
+    @abstractmethod
+    def exists(self, patient_id: str, indicator_id: str, date: date) -> bool: ...
+```
+
+**Justification** :
+
+1. **Moindre privilège garanti par le type** : `CoachingService` reçoit un `PatientEntryReader` — il lui est structurellement impossible d'appeler `save()` ou `exists()`. La règle « un coach ne fait que lire » n'est plus une convention d'équipe, c'est une contrainte du système de types.
+2. **Découplage inter-BC** : le BC Coaching ne dépend plus d'un port du BC Wellness Tracking. Il possède son propre port (`PatientEntryReader`), ce qui rend le contrat inter-bounded contexts explicite et versionnable indépendamment.
+3. **Implémentation unique côté infrastructure** : grâce à l'héritage multiple Python, un seul adapter Django pourra implémenter les deux interfaces (`WellnessEntryRepository` + `PatientEntryReader`). Pas de duplication de code côté infrastructure.
+
+---
+
+### 6.8 Guard Clauses Pattern (validation défensive)
+
+**Catégorie** : Pattern de programmation défensive
+
+**Localisation** : `domain/services/tracking_service.py` (`create_entry`, `update_entry`), `domain/services/coaching_service.py` (`get_patient_data`)
+
+**Implémentation** : chaque méthode de service valide ses préconditions en début d'exécution et échoue immédiatement (fail fast) avec une exception explicite si une règle métier est violée.
+
+```python
+# TrackingService — chaîne de guard clauses
+def create_entry(self, patient_id, indicator_id, entry_date, value, note=None):
+    # Guard 1 : unicité quotidienne
+    if self.entry_repo.exists(patient_id, indicator_id, entry_date):
+        raise ValueError("Entry already exists...")
+
+    # Guard 2 : validation de la plage de valeurs
+    indicator = self.indicator_repo.find_by_id(indicator_id)
+    self._validate_value(value, indicator)
+
+    # Happy path : création de l'entrée
+    entry = WellnessEntry(id=str(uuid.uuid4()), ...)
+    return self.entry_repo.save(entry)
+```
+
+```python
+# CoachingService — guard clause d'autorisation
+def get_patient_data(self, coach_id, patient_id):
+    if not self.check_access(coach_id, patient_id):
+        raise PermissionError("Coach has no active assignment...")
+    return self.entry_reader.find_by_patient(patient_id)
+```
+
+**Justification** :
+
+1. **Défense en profondeur** : les règles métier sont appliquées au niveau du domaine, indépendamment des validations qui seront ajoutées au niveau API (serializers DRF). Même si un contrôleur oublie une validation, le service la rattrape.
+2. **Fail fast** : en échouant dès la première violation, on évite les états incohérents (entrée créée avec une valeur hors plage, données coach sans affectation active).
+3. **Lisibilité** : les guard clauses séparent clairement les préconditions du chemin nominal. Un lecteur du code identifie immédiatement les règles métier en début de méthode, sans devoir lire toute l'implémentation.
+
+---
+
+### 6.9 Test Doubles Pattern (Mock Objects)
+
+**Catégorie** : Pattern de test
+
+**Localisation** : `tests/domain/test_tracking_service.py`, `tests/domain/test_coaching_service.py`
+
+**Implémentation** : les tests utilisent `unittest.mock.MagicMock` pour simuler les repositories. Les fixtures pytest assemblent les mocks et les injectent dans les services via le constructeur.
+
+```python
+# tests/domain/test_tracking_service.py
+@pytest.fixture
+def entry_repo():
+    return MagicMock()
+
+@pytest.fixture
+def indicator_repo(mood_indicator):
+    repo = MagicMock()
+    repo.find_by_id.return_value = mood_indicator
+    return repo
+
+@pytest.fixture
+def service(entry_repo, indicator_repo):
+    return TrackingService(entry_repo=entry_repo, indicator_repo=indicator_repo)
+```
+
+**Justification** :
+
+1. **Isolation totale** : les tests du domaine ne dépendent ni de Django ni de PostgreSQL. Ils s'exécutent en millisecondes, sans infrastructure. C'est la conséquence directe des patterns Repository + Dependency Injection — sans eux, on serait obligé de monter une base de données pour chaque test.
+2. **Contrôle fin du comportement** : `MagicMock` permet de simuler précisément chaque scénario — `entry_repo.exists.return_value = True` simule un doublon, `entry_repo.save.side_effect = lambda e: e` simule un save transparent. Chaque test configure exactement le contexte nécessaire.
+3. **Vérification des interactions** : `entry_repo.save.assert_called_once()` vérifie que le service a bien appelé la bonne méthode du repository. On teste non seulement le résultat mais aussi le comportement interne du service.
+
+---
+
+### 6.10 Synthèse des design patterns
+
+| Pattern | Localisation | Besoin adressé | Principe SOLID |
+|---|---|---|---|
+| **Repository** | `domain/ports/*.py` | Découplage domaine / persistance | DIP (Dependency Inversion) |
+| **Dependency Injection** | Constructeurs des services | Testabilité, flexibilité de composition | DIP |
+| **Domain Service** | `domain/services/*.py` | Orchestration de la logique métier | SRP (Single Responsibility) |
+| **Entity** | `domain/entities/*.py` | Encapsulation des règles métier avec identité | SRP |
+| **Value Object** | `domain/entities/trend.py` | Résultat de calcul typé, sans cycle de vie | — |
+| **Ports & Adapters** | Architecture globale `domain/` vs `infrastructure/` | Indépendance du framework | DIP, OCP |
+| **Interface Segregation** | `PatientEntryReader` vs `WellnessEntryRepository` | Moindre privilège, découplage inter-BC | ISP |
+| **Guard Clauses** | Méthodes des services | Validation défensive, fail fast | — |
+| **Test Doubles (Mocks)** | `tests/domain/*.py` | Tests rapides et isolés | — |
+
+**Cohérence globale** : ces patterns ne sont pas utilisés individuellement — ils forment un système cohérent. Le Repository Pattern n'a de sens que parce que l'injection de dépendances permet de le substituer en test. L'injection de dépendances n'a de sens que parce que les ports définissent des contrats abstraits. Les ports abstraits n'ont de sens que dans une architecture hexagonale qui sépare domaine et infrastructure. Chaque pattern renforce les autres et contribue à l'objectif central du projet : un domaine métier testable, maintenable et indépendant du framework.
