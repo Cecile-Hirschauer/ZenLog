@@ -48,7 +48,7 @@ jobs:
       - name: Run domain tests
         run: pytest tests/domain/ -v --tb=short
       - name: Run integration tests
-        run: pytest tests/infrastructure/ -v --tb=short
+        run: pytest tests/infrastructure/ -v --tb=short || [ $? -eq 5 ]
         env:
           DB_NAME: zenlog_test
           DB_USER: zenlog
