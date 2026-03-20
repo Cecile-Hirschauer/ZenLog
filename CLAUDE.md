@@ -50,13 +50,15 @@ Requires PostgreSQL. Configure via `.env` file (see `.env.example`):
 **Hexagonal architecture (DDD)** with strict domain/infrastructure separation.
 
 ### Domain layer (`domain/`) — Pure Python, zero Django imports
+
 - **`entities/`** — Dataclasses: `Indicator`, `WellnessEntry`, `Assignment`, `Trend` (value object)
 - **`services/`** — Business logic: `TrackingService` (entry CRUD, trends), `CoachingService` (coach access control, patient data)
 - **`ports/`** — Abstract interfaces (ABC): `WellnessEntryRepository`, `IndicatorRepository`, `AssignmentRepository`, `PatientEntryReader` (read-only port for Coaching BC)
 
 ### Infrastructure layer (`infrastructure/`) — Django/DRF adapters
-- **`models.py`** — Django ORM models (implements DB schema from `zenlog_doc/MCD.mermaid`)
-- **`repositories/`** — Concrete implementations of domain ports using Django ORM
+
+- **`models.py`** — Django ORM models: `User` (AbstractUser + role), `Indicator`, `WellnessEntry`, `Assignment`. All use UUID primary keys. Table names follow RGPD schema separation (`identity_user`, `wellness_*`).
+- **`repositories/`** — Concrete implementations of domain ports using Django ORM: `DjangoWellnessEntryRepository`, `DjangoIndicatorRepository`, `DjangoAssignmentRepository`. Each has a `_to_entity()` method converting Django models to domain dataclasses (UUID→str conversion happens here).
 - **`views/`** — DRF viewsets (API endpoints)
 - **`serializers/`** — DRF serializers
 - **`permissions/`** — Role-based DRF permissions (`IsPatient`, `IsCoach`, `IsAdmin`)
