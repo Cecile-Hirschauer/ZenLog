@@ -103,6 +103,27 @@ Chaque choix technique ci-dessous est motivé par un besoin métier ou un contex
 
 **Pourquoi pas SQLite ?** SQLite est pratique en développement local mais ne supporte pas les accès concurrents en écriture, n'offre pas de chiffrement au repos natif, et n'est pas adapté à un déploiement cloud multi-utilisateurs. Pour une application manipulant des données de santé en production, PostgreSQL est le choix responsable.
 
+#### Stratégie d'identifiants : UUID en base, `str` dans le domaine
+
+Le MCD et le diagramme de classes spécifient des identifiants UUID pour toutes les entités. En pratique, ce choix se décline en deux couches distinctes :
+
+| Couche | Type utilisé | Justification |
+| --- | --- | --- |
+| **Domaine** (entités, services, ports) | `str` | Le domaine reste agnostique du format d'identifiant. Il ne dépend pas du module `uuid` de Python ni d'aucun choix d'infrastructure. Si demain les IDs deviennent des ULID ou des identifiants externes, seule la couche infrastructure change. |
+| **Infrastructure** (modèles Django) | `UUIDField(primary_key=True, default=uuid4)` | UUID v4 en clé primaire pour la sécurité (non prédictible, contrairement aux IDs auto-incrémentés) et la conformité RGPD (un ID séquentiel révèle le nombre d'utilisateurs et l'ordre d'inscription). |
+
+**Pourquoi UUID plutôt qu'un auto-increment ?**
+
+- **Sécurité** : un ID séquentiel (`/api/patients/42/`) est prédictible — un attaquant peut énumérer les ressources. Un UUID (`/api/patients/a3f8b2c1-...`) ne révèle rien.
+- **RGPD** : un ID séquentiel expose indirectement des métadonnées (nombre total d'enregistrements, ordre de création). Les UUID éliminent cette fuite d'information.
+- **Architecture distribuée** : les UUID peuvent être générés côté client sans coordination avec la base, ce qui facilitera une future architecture événementielle ou un mode hors-ligne.
+
+**Pourquoi `str` dans le domaine plutôt que `UUID` ?**
+
+Le domaine métier n'a pas besoin de savoir qu'un identifiant est un UUID. Il a besoin d'une valeur opaque qui identifie une entité de manière unique. Utiliser `str` dans les dataclasses et les ports respecte le principe d'indépendance du domaine vis-à-vis de l'infrastructure — la même logique qui justifie de ne pas importer Django dans `domain/`. La conversion `str` ↔ `UUID` est assurée par les repositories, qui font le pont entre les deux mondes.
+
+**Impact sur les performances** : PostgreSQL stocke un UUID en 16 octets via son type natif `uuid`, contre 36 octets pour un `VARCHAR(36)` et 8 octets pour un `BIGINT`. L'overhead est minime et largement compensé par les bénéfices en sécurité. Pour une application de suivi bien-être avec quelques milliers d'entrées, la différence de performance est négligeable.
+
 ### 3.4 Authentification : JWT via djangorestframework-simplejwt
 
 | Besoin métier | Justification technique |
