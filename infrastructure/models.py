@@ -38,8 +38,8 @@ class User(AbstractUser):
 
     def __str__(self):
         return f"{self.email} ({self.role})"
-    
-    
+
+
 class Indicator(models.Model):
     """A wellness metric that patients can track (e.g., mood, sleep).
 
@@ -61,8 +61,8 @@ class Indicator(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.unit})"
-    
-    
+
+
 class WellnessEntry(models.Model):
     """A daily wellness measurement recorded by a patient.
 
@@ -100,8 +100,8 @@ class WellnessEntry(models.Model):
 
     def __str__(self):
         return f"{self.patient_id} - {self.indicator.name} - {self.date}"
-    
-    
+
+
 class Assignment(models.Model):
     """A coach-patient relationship with lifecycle management.
 
@@ -141,4 +141,3 @@ class Assignment(models.Model):
     def __str__(self):
         status = "active" if self.is_active else "inactive"
         return f"Coach {self.coach_id} → Patient {self.patient_id} ({status})"
-    
