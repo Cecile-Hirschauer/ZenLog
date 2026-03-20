@@ -1,7 +1,5 @@
 from datetime import date, timedelta
 
-import pytest
-
 from tests.infrastructure.factories import (
     AssignmentFactory,
     CoachFactory,
@@ -18,9 +16,7 @@ class TestDjangoWellnessEntryRepository:
         """T-R-01: Entry is persisted and retrievable by find_by_id."""
         patient = UserFactory()
         indicator = IndicatorFactory()
-        entry = WellnessEntryFactory(
-            patient=patient, indicator=indicator, value=7.0
-        )
+        entry = WellnessEntryFactory(patient=patient, indicator=indicator, value=7.0)
 
         from infrastructure.repositories.wellness_entry_repository import (
             DjangoWellnessEntryRepository,
@@ -41,7 +37,6 @@ class TestDjangoWellnessEntryRepository:
 
         today = date.today()
         yesterday = today - timedelta(days=1)
-        last_week = today - timedelta(days=7)
 
         WellnessEntryFactory(
             patient=patient, indicator=indicator_a, date=today, value=8.0
@@ -72,9 +67,7 @@ class TestDjangoWellnessEntryRepository:
         assert len(results) == 2
 
         # Filter by date range
-        results = repo.find_by_patient(
-            str(patient.id), date_from=today, date_to=today
-        )
+        results = repo.find_by_patient(str(patient.id), date_from=today, date_to=today)
         assert len(results) == 2
 
     def test_exists(self):
@@ -87,13 +80,18 @@ class TestDjangoWellnessEntryRepository:
 
         repo = DjangoWellnessEntryRepository()
 
-        assert repo.exists(
-            str(entry.patient.id), str(entry.indicator.id), entry.date
-        ) is True
-        assert repo.exists(
-            str(entry.patient.id), str(entry.indicator.id),
-            entry.date + timedelta(days=1),
-        ) is False
+        assert (
+            repo.exists(str(entry.patient.id), str(entry.indicator.id), entry.date)
+            is True
+        )
+        assert (
+            repo.exists(
+                str(entry.patient.id),
+                str(entry.indicator.id),
+                entry.date + timedelta(days=1),
+            )
+            is False
+        )
 
 
 class TestDjangoIndicatorRepository:
@@ -129,17 +127,19 @@ class TestDjangoAssignmentRepository:
 
         repo = DjangoAssignmentRepository()
 
-        assert repo.exists_active(
-            str(assignment.coach.id), str(assignment.patient.id)
-        ) is True
+        assert (
+            repo.exists_active(str(assignment.coach.id), str(assignment.patient.id))
+            is True
+        )
 
         # Deactivate
         assignment.is_active = False
         assignment.save()
 
-        assert repo.exists_active(
-            str(assignment.coach.id), str(assignment.patient.id)
-        ) is False
+        assert (
+            repo.exists_active(str(assignment.coach.id), str(assignment.patient.id))
+            is False
+        )
 
     def test_find_active_by_coach(self):
         """T-R-06: Only active assignments for the coach are returned."""

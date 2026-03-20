@@ -1,6 +1,8 @@
-import factory
 from datetime import date
-from infrastructure.models import User, Indicator, WellnessEntry, Assignment
+
+import factory
+
+from infrastructure.models import Assignment, Indicator, User, WellnessEntry
 
 
 class UserFactory(factory.django.DjangoModelFactory):
