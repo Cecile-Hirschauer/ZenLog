@@ -14,15 +14,15 @@ def assignment_repo():
 
 
 @pytest.fixture
-def entry_repo():
+def entry_reader():
     return MagicMock()
 
 
 @pytest.fixture
-def service(assignment_repo, entry_repo):
+def service(assignment_repo, entry_reader):
     return CoachingService(
         assignment_repo=assignment_repo,
-        entry_repo=entry_repo,
+        entry_reader=entry_reader,
     )
 
 
@@ -79,11 +79,11 @@ class TestGetPatientData:
     """Tests for coach reading patient entries"""
 
     def test_returns_entries_when_access_granted(
-        self, service, assignment_repo, entry_repo
+        self, service, assignment_repo, entry_reader
     ):
         """Coach gets patient data when assignment is active"""
         assignment_repo.exists_active.return_value = True
-        entry_repo.find_by_patient.return_value = [
+        entry_reader.find_by_patient.return_value = [
             WellnessEntry(
                 id="e1",
                 patient_id="patient-1",
