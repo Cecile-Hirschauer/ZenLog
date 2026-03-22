@@ -24,9 +24,7 @@ class TestAuthSecurity:
         response = api_client.get("/api/wellness/entries/")
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    @pytest.mark.skip(
-        reason="Endpoint /api/wellness/entries/ not yet implemented (Phase 3)"
-    )
+
     def test_access_with_expired_token(self, api_client):
         """T-S-02: Request with expired token returns 401."""
         user = UserFactory()
