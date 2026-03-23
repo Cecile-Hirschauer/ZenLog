@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 import pytest
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -13,39 +15,34 @@ def api_client():
 class TestRateLimiting:
     """T-S-06: Throttling on auth endpoints."""
 
-    def test_login_throttled_after_limit(self, api_client, settings):
+    def test_login_throttled_after_limit(self, api_client):
         """T-S-06: Repeated login attempts are throttled."""
-        # Override throttle to a very low limit for testing
-        settings.REST_FRAMEWORK = {
-            **settings.REST_FRAMEWORK,
-            "DEFAULT_THROTTLE_CLASSES": [
-                "rest_framework.throttling.ScopedRateThrottle",
-            ],
-            "DEFAULT_THROTTLE_RATES": {
-                "auth": "3/minute",
-            },
-        }
+        from rest_framework.throttling import ScopedRateThrottle
 
-        user = UserFactory(email="throttle@zenlog.test")
-        user.set_password("TestPass123!")
-        user.save()
+        # Clear any previous throttle cache
+        ScopedRateThrottle.cache.clear()
 
-        # Burn through the 3 allowed requests
-        for _ in range(3):
-            api_client.post(
+        with patch.object(ScopedRateThrottle, "get_rate", return_value="3/min"):
+            user = UserFactory(email="throttle@zenlog.test")
+            user.set_password("TestPass123!")
+            user.save()
+
+            # Burn through the 3 allowed requests
+            for _ in range(3):
+                api_client.post(
+                    "/api/auth/token/",
+                    {"email": "throttle@zenlog.test", "password": "wrong"},
+                    format="json",
+                )
+
+            # 4th request should be throttled
+            response = api_client.post(
                 "/api/auth/token/",
                 {"email": "throttle@zenlog.test", "password": "wrong"},
                 format="json",
             )
 
-        # 4th request should be throttled
-        response = api_client.post(
-            "/api/auth/token/",
-            {"email": "throttle@zenlog.test", "password": "wrong"},
-            format="json",
-        )
-
-        assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+            assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
 
 
 class TestSecurityHeaders:
