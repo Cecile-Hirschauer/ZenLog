@@ -1,4 +1,7 @@
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import (
+    validate_password as django_validate_password,
+)
 from rest_framework import serializers
 
 User = get_user_model()
@@ -11,12 +14,20 @@ class RegisterSerializer(serializers.ModelSerializer):
     Password is write-only and hashed via Django's set_password().
     """
 
-    password = serializers.CharField(write_only=True, min_length=8)
+    email = serializers.EmailField()
+    username = serializers.CharField(max_length=150)
+    password = serializers.CharField(write_only=True)
 
     class Meta:
         model = User
         fields = ["id", "email", "username", "password", "role"]
         read_only_fields = ["id"]
+
+    def validate_email(self, value):
+        """Check email uniqueness before hitting the database."""
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("A user with this email already exists.")
+        return value
 
     def create(self, validated_data):
         password = validated_data.pop("password")
@@ -24,3 +35,8 @@ class RegisterSerializer(serializers.ModelSerializer):
         user.set_password(password)
         user.save()
         return user
+
+    def validate_password(self, value):
+        """Delegate to Django's password validators."""
+        django_validate_password(value)
+        return value
