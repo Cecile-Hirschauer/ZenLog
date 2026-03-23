@@ -102,5 +102,3 @@ class TestToken:
 
         assert response.status_code == status.HTTP_200_OK
         assert "access" in response.data
-
-
