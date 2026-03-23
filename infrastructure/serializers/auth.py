@@ -1,5 +1,7 @@
 from django.contrib.auth import get_user_model
-from django.contrib.auth.password_validation import validate_password as django_validate_password
+from django.contrib.auth.password_validation import (
+    validate_password as django_validate_password,
+)
 from rest_framework import serializers
 
 User = get_user_model()
@@ -33,7 +35,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         user.set_password(password)
         user.save()
         return user
-    
+
     def validate_password(self, value):
         """Delegate to Django's password validators."""
         django_validate_password(value)

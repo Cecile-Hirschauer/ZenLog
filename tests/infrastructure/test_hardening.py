@@ -17,17 +17,17 @@ class TestRateLimiting:
 
     def test_login_throttled_after_limit(self, api_client):
         """T-S-06: Repeated login attempts are throttled."""
+        from django.core.cache import cache
         from rest_framework.throttling import ScopedRateThrottle
 
-        # Clear any previous throttle cache
-        ScopedRateThrottle.cache.clear()
+        # Clear cache before test
+        cache.clear()
 
         with patch.object(ScopedRateThrottle, "get_rate", return_value="3/min"):
             user = UserFactory(email="throttle@zenlog.test")
             user.set_password("TestPass123!")
             user.save()
 
-            # Burn through the 3 allowed requests
             for _ in range(3):
                 api_client.post(
                     "/api/auth/token/",
@@ -35,7 +35,6 @@ class TestRateLimiting:
                     format="json",
                 )
 
-            # 4th request should be throttled
             response = api_client.post(
                 "/api/auth/token/",
                 {"email": "throttle@zenlog.test", "password": "wrong"},
@@ -43,6 +42,9 @@ class TestRateLimiting:
             )
 
             assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+
+        # Clear cache after test so other tests aren't throttled
+        cache.clear()
 
 
 class TestSecurityHeaders:
