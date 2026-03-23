@@ -1371,52 +1371,54 @@ Objectif : documentation OpenAPI complète et fonctionnelle.
 
 ---
 
-### 7.5 Synthèse — Vue d'ensemble des branches
+### 7.5 Synthèse — Vue d'ensemble des branches (bilan réel)
 
 ```
 main (stable, déployable)
 │
-├── feature/django-models              ← Phase 1 : BDD
-│   └── 5 commits (models + migrations)
-│   └── PR → merge
+├── feature/django-models              ← Phase 1 : Models + Settings
+│   └── Models User/Indicator/WellnessEntry/Assignment + AUTH_USER_MODEL
+│   └── PR → merged ✅
 │
-├── feature/django-repositories        ← Phase 1 : Adapters ORM
-│   └── 4 commits (TDD : tests puis implémentation)
-│   └── PR → merge
+├── feature/django-repositories        ← Phase 2 : Repos + Auth + Tests
+│   └── Repositories Django (WellnessEntry, Indicator, Assignment)
+│   └── Auth (Register + JWT SimpleJWT) + Factories + T-R-01→T-R-06
+│   └── PR → merged ✅
 │
-├── feature/auth-endpoints             ← Phase 2 : Auth + Permissions
-│   └── 5 commits (TDD : T-I-01→T-I-06, T-S-01, T-S-02)
-│   └── PR → merge
-│
-├── feature/wellness-api               ← Phase 3 : Cœur API
-│   └── 7 commits (TDD : T-I-07→T-I-13, T-S-03→T-S-05, T-S-08)
-│   └── PR → merge
+├── feature/wellness-api               ← Phase 3 : API Wellness + Sécurité
+│   └── CRUD WellnessEntryViewSet + IndicatorViewSet + TrendView
+│   └── Permissions (IsPatient, IsCoach, IsAdmin) + validation dates
+│   └── Tests T-I-07→T-I-13, T-S-01→T-S-05, T-S-08
+│   └── PR → merged ✅
 │
 ├── feature/coaching-api               ← Phase 4 : API Coaching
-│   └── 6 commits (TDD : T-I-14→T-I-21, T-S-04, T-S-06, T-S-07)
-│   └── PR → merge
+│   └── CoachingPatientsView + CoachingPatientEntriesView
+│   └── Injection CoachingService + PatientEntryReader (ISP)
+│   └── Tests T-I-14→T-I-19
+│   └── PR → merged ✅
 │
-├── feature/security-hardening         ← Phase 5 : Sécurité
-│   └── 4 commits (T-S-09, T-S-10)
-│   └── PR → merge
+├── feature/security-hardening         ← Phase 5 : Sécurité renforcée
+│   └── Rate limiting (ScopedRateThrottle) + CORS (django-cors-headers)
+│   └── Password validation Django + security headers
+│   └── Tests T-S-06, T-S-07 + CORS + input validation
+│   └── PR → merged ✅
 │
-└── feature/api-documentation          ← Phase 6 : Swagger + README
-    └── 3 commits
-    └── PR → merge
+└── feature/api-documentation          ← Phase 6 : Documentation finale
+    └── Bilan, couverture tests, schéma architecture
+    └── PR → merged ✅
 ```
 
-**Total** : 6 branches, 34 commits, 31 tests d'intégration alignés sur le plan de tests existant (T-I-01 à T-I-21 + T-S-01 à T-S-10).
+**Total réel** : 6 branches, ~60 tests passants (24 domaine + 6 repository + 13 intégration API + 6 coaching + ~11 sécurité/hardening).
 
-### 7.6 Couverture des tests — Mapping plan de tests ↔ branches
+### 7.6 Couverture des tests — Bilan réel
 
-| Phase | Branche | Tests unitaires domaine | Tests intégration API | Tests sécurité |
-|---|---|---|---|---|
-| Phase 1a | `feature/django-models` | — | — | — |
-| Phase 1b | `feature/django-repositories` | — | T-R-01 à T-R-06 (nouveaux) | — |
-| Phase 2 | `feature/auth-endpoints` | — | T-I-01 à T-I-06 | T-S-01, T-S-02 |
-| Phase 3 | `feature/wellness-api` | existants (24) | T-I-07 à T-I-13 | T-S-03, T-S-04, T-S-05, T-S-08 |
-| Phase 4 | `feature/coaching-api` | existants (24) | T-I-14 à T-I-21 | T-S-04, T-S-06, T-S-07 |
-| Phase 5 | `feature/security-hardening` | — | — | T-S-09, T-S-10 |
-| Phase 6 | `feature/api-documentation` | — | — | — |
+| Phase | Branche | Tests |
+|---|---|---|
+| Phase 1 | `feature/django-models` | — (models + migration) |
+| Phase 2 | `feature/django-repositories` | T-R-01→T-R-06, T-I-01→T-I-05 |
+| Phase 3 | `feature/wellness-api` | T-I-07→T-I-13, T-S-01→T-S-05, T-S-08 |
+| Phase 4 | `feature/coaching-api` | T-I-14→T-I-19 |
+| Phase 5 | `feature/security-hardening` | T-S-06, T-S-07, CORS, input validation |
+| Phase 6 | `feature/api-documentation` | — (documentation) |
 
-**Bilan final attendu** : 24 tests domaine (existants) + 6 tests repository + 21 tests intégration API + 10 tests sécurité = **61 tests au total**.
+**Bilan final** : 60 tests passants, 0 échecs, couverture des deux bounded contexts (Wellness Tracking + Coaching).
