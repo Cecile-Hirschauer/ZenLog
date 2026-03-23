@@ -1422,3 +1422,51 @@ main (stable, déployable)
 | Phase 6 | `feature/api-documentation` | — (documentation) |
 
 **Bilan final** : 60 tests passants, 0 échecs, couverture des deux bounded contexts (Wellness Tracking + Coaching).
+
+---
+
+## 8. Bilan d'architecture — Vue transversale
+
+### 8.1 Flux d'une requête API (de HTTP au domaine)
+
+```
+Client HTTP
+    │
+    ▼
+Django URL Router (infrastructure/urls.py)
+    │
+    ▼
+DRF ViewSet / APIView (infrastructure/views/)
+    │  ├── Permissions (IsAuthenticated, IsPatient, IsCoach, IsAdmin)
+    │  ├── Serializer validation (infrastructure/serializers/)
+    │  └── Throttling (ScopedRateThrottle)
+    │
+    ▼
+Domain Service (domain/services/)
+    │  ├── TrackingService (BC Wellness)
+    │  └── CoachingService (BC Coaching)
+    │
+    ▼
+Port (ABC) ◄──── Injection par constructeur
+    │
+    ▼
+Django Repository (infrastructure/repositories/)
+    │
+    ▼
+PostgreSQL (via Django ORM)
+```
+
+### 8.2 Principes respectés
+
+- **Hexagonal Architecture** : le domaine ne dépend jamais de Django. Les imports vont uniquement de `infrastructure/` vers `domain/`, jamais l'inverse.
+- **DDD** : deux bounded contexts (Wellness Tracking, Coaching) avec des ports distincts et un langage ubiquitaire cohérent.
+- **Interface Segregation** : `PatientEntryReader` (read-only pour le coaching) vs `WellnessEntryRepository` (CRUD complet). Une seule implémentation Django, deux contrats.
+- **TDD** : tests écrits avant l'implémentation pour chaque feature API.
+- **Security by design** : JWT, permissions par rôle, rate limiting, CORS, validation des entrées, isolation des données patient.
+
+### 8.3 Points d'amélioration identifiés (hors périmètre MVP)
+
+- **GraphQL** : ajouter une couche Strawberry pour les clients mobiles (agrégation côté serveur, réduction des appels réseau).
+- **Event sourcing** : traçabilité complète des modifications d'entrées wellness.
+- **Cache** : Redis pour les résultats de tendances et les listes d'indicateurs.
+- **CI/CD** : pipeline GitHub Actions avec pytest + ruff + coverage.
