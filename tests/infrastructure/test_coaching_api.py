@@ -1,5 +1,3 @@
-from datetime import date
-
 import pytest
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -69,7 +67,7 @@ class TestCoachPatientData:
         patient = UserFactory(email="cp@zenlog.test")
         indicator = IndicatorFactory()
         AssignmentFactory(coach=coach, patient=patient)
-        entry = WellnessEntryFactory(patient=patient, indicator=indicator, value=8.0)
+        WellnessEntryFactory(patient=patient, indicator=indicator, value=8.0)
 
         _auth(api_client, coach)
         response = api_client.get(f"/api/coaching/patients/{patient.id}/entries/")
