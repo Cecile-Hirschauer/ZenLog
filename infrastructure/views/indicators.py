@@ -32,10 +32,12 @@ class IndicatorViewSet(viewsets.ViewSet):
         serializer = IndicatorSerializer(indicators, many=True)
 
         # Manual pagination for consistency
-        return Response({
-            "count": len(indicators),
-            "results": serializer.data,
-        })
+        return Response(
+            {
+                "count": len(indicators),
+                "results": serializer.data,
+            }
+        )
 
     def create(self, request):
         """POST /api/wellness/indicators/ — Create indicator (admin only)."""

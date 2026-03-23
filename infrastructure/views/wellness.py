@@ -1,3 +1,5 @@
+from datetime import date as date_type
+
 from rest_framework import status, viewsets
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -30,14 +32,24 @@ class WellnessEntryViewSet(viewsets.ViewSet):
             indicator_repo=DjangoIndicatorRepository(),
         )
 
+    @staticmethod
+    def _parse_date(value):
+        """Parse a date string (YYYY-MM-DD) or return None if invalid."""
+        if not value:
+            return None
+        try:
+            return date_type.fromisoformat(value)
+        except (ValueError, TypeError):
+            return None
+
     def list(self, request):
         """GET /api/wellness/entries/ — List my entries (with optional filters)."""
         repo = DjangoWellnessEntryRepository()
         entries = repo.find_by_patient(
             patient_id=str(request.user.id),
             indicator_id=request.query_params.get("indicator_id"),
-            date_from=request.query_params.get("date_from"),
-            date_to=request.query_params.get("date_to"),
+            date_from=self._parse_date(request.query_params.get("date_from")),
+            date_to=self._parse_date(request.query_params.get("date_to")),
         )
         # Manual pagination
         page = int(request.query_params.get("page", 1))
@@ -47,10 +59,12 @@ class WellnessEntryViewSet(viewsets.ViewSet):
         paginated = entries[start:end]
 
         serializer = EntrySerializer(paginated, many=True)
-        return Response({
-            "count": len(entries),
-            "results": serializer.data,
-        })
+        return Response(
+            {
+                "count": len(entries),
+                "results": serializer.data,
+            }
+        )
 
     def retrieve(self, request, pk=None):
         """GET /api/wellness/entries/{id}/ — Detail of one entry (owner only)."""

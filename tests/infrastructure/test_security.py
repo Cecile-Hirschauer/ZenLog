@@ -5,10 +5,11 @@ from rest_framework import status
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import AccessToken
 
-from tests.infrastructure.factories import UserFactory, CoachFactory, AdminFactory, IndicatorFactory
-
-
-
+from tests.infrastructure.factories import (
+    CoachFactory,
+    IndicatorFactory,
+    UserFactory,
+)
 
 
 @pytest.fixture
@@ -19,14 +20,10 @@ def api_client():
 class TestAuthSecurity:
     """T-S-01, T-S-02: Authentication security tests."""
 
-    @pytest.mark.skip(
-        reason="Endpoint /api/wellness/entries/ not yet implemented (Phase 3)"
-    )
     def test_access_without_token(self, api_client):
         """T-S-01: Request without token returns 401."""
         response = api_client.get("/api/wellness/entries/")
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
-
 
     def test_access_with_expired_token(self, api_client):
         """T-S-02: Request with expired token returns 401."""
@@ -40,8 +37,8 @@ class TestAuthSecurity:
         response = api_client.get("/api/wellness/entries/")
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
-        
-        
+
+
 class TestRoleEscalation:
     """T-S-03, T-S-04: Role escalation tests."""
 
@@ -56,9 +53,7 @@ class TestRoleEscalation:
             {"email": "esc@zenlog.test", "password": "TestPass123!"},
             format="json",
         )
-        api_client.credentials(
-            HTTP_AUTHORIZATION=f"Bearer {response.data['access']}"
-        )
+        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {response.data['access']}")
 
         response = api_client.post(
             "/api/wellness/indicators/",
@@ -79,9 +74,7 @@ class TestRoleEscalation:
             {"email": "coach-esc@zenlog.test", "password": "TestPass123!"},
             format="json",
         )
-        api_client.credentials(
-            HTTP_AUTHORIZATION=f"Bearer {response.data['access']}"
-        )
+        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {response.data['access']}")
 
         indicator = IndicatorFactory()
         response = api_client.post(
@@ -103,6 +96,7 @@ class TestDataIsolation:
         patient_a.save()
 
         from tests.infrastructure.factories import WellnessEntryFactory
+
         other_entry = WellnessEntryFactory()  # belongs to another patient
 
         response = api_client.post(
@@ -110,9 +104,7 @@ class TestDataIsolation:
             {"email": "a@zenlog.test", "password": "TestPass123!"},
             format="json",
         )
-        api_client.credentials(
-            HTTP_AUTHORIZATION=f"Bearer {response.data['access']}"
-        )
+        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {response.data['access']}")
 
         response = api_client.get(f"/api/wellness/entries/{other_entry.id}/")
 
@@ -133,13 +125,9 @@ class TestInjection:
             {"email": "inj@zenlog.test", "password": "TestPass123!"},
             format="json",
         )
-        api_client.credentials(
-            HTTP_AUTHORIZATION=f"Bearer {response.data['access']}"
-        )
+        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {response.data['access']}")
 
-        response = api_client.get(
-            "/api/wellness/entries/?date_from='; DROP TABLE--"
-        )
+        response = api_client.get("/api/wellness/entries/?date_from='; DROP TABLE--")
 
         # Should return 200 (empty list) or 400 — never a 500 SQL error
         assert response.status_code in (

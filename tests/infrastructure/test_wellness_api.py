@@ -6,7 +6,6 @@ from rest_framework.test import APIClient
 
 from tests.infrastructure.factories import (
     AdminFactory,
-    CoachFactory,
     IndicatorFactory,
     UserFactory,
     WellnessEntryFactory,
@@ -85,9 +84,7 @@ class TestCreateEntry:
     def test_create_duplicate_entry(self, auth_client, patient):
         """T-I-08: Duplicate entry returns 400."""
         indicator = IndicatorFactory(name="sleep")
-        WellnessEntryFactory(
-            patient=patient, indicator=indicator, date=date.today()
-        )
+        WellnessEntryFactory(patient=patient, indicator=indicator, date=date.today())
 
         response = auth_client.post(
             "/api/wellness/entries/",
@@ -109,8 +106,12 @@ class TestListEntries:
         """T-I-09: Patient sees only their own entries."""
         indicator = IndicatorFactory()
         WellnessEntryFactory(patient=patient, indicator=indicator, value=7.0)
-        WellnessEntryFactory(patient=patient, indicator=indicator, value=8.0,
-                             date=date.today() - timedelta(days=1))
+        WellnessEntryFactory(
+            patient=patient,
+            indicator=indicator,
+            value=8.0,
+            date=date.today() - timedelta(days=1),
+        )
         # Another patient's entry
         WellnessEntryFactory(indicator=indicator, value=5.0)
 
@@ -134,9 +135,7 @@ class TestUpdateEntry:
     def test_update_own_entry(self, auth_client, patient):
         """T-I-11: Patient updates their own entry."""
         indicator = IndicatorFactory()
-        entry = WellnessEntryFactory(
-            patient=patient, indicator=indicator, value=5.0
-        )
+        entry = WellnessEntryFactory(patient=patient, indicator=indicator, value=5.0)
 
         response = auth_client.patch(
             f"/api/wellness/entries/{entry.id}/",
