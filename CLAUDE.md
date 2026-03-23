@@ -42,7 +42,9 @@ python manage.py runserver
 ```
 
 ### Environment
-Requires PostgreSQL. Configure via `.env` file (see `.env.example`):
+
+Requires PostgreSQL via Docker container `zenlog-db` (`docker start zenlog-db`). Configure via `.env` file (see `.env.example`):
+
 - `SECRET_KEY`, `DEBUG`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`
 
 ## Architecture
@@ -59,10 +61,16 @@ Requires PostgreSQL. Configure via `.env` file (see `.env.example`):
 
 - **`models.py`** — Django ORM models: `User` (AbstractUser + role), `Indicator`, `WellnessEntry`, `Assignment`. All use UUID primary keys. Table names follow RGPD schema separation (`identity_user`, `wellness_*`).
 - **`repositories/`** — Concrete implementations of domain ports using Django ORM: `DjangoWellnessEntryRepository`, `DjangoIndicatorRepository`, `DjangoAssignmentRepository`. Each has a `_to_entity()` method converting Django models to domain dataclasses (UUID→str conversion happens here).
-- **`views/`** — DRF viewsets (API endpoints)
-- **`serializers/`** — DRF serializers
-- **`permissions/`** — Role-based DRF permissions (`IsPatient`, `IsCoach`, `IsAdmin`)
-- **`urls.py`** — API routing
+- **`views/`** — DRF viewsets and views:
+  - `wellness.py` — `WellnessEntryViewSet` (CRUD with `TrackingService` injection, ISO date filtering via `_parse_date()`)
+  - `trends.py` — `TrendView` (standalone `APIView` for `GET /api/wellness/trends/`)
+  - `indicators.py` — `IndicatorViewSet` (dynamic permissions: list=authenticated, create=admin)
+  - `auth.py` — `RegisterView`
+- **`serializers/`** — Pure DRF serializers (not `ModelSerializer`):
+  - `wellness.py` — `CreateEntrySerializer`, `UpdateEntrySerializer`, `EntrySerializer`, `TrendSerializer`, `IndicatorSerializer`, `CreateIndicatorSerializer`
+  - `auth.py` — `RegisterSerializer`
+- **`permissions/roles.py`** — Role-based DRF permissions (`IsPatient`, `IsCoach`, `IsAdmin`)
+- **`urls.py`** — DRF `DefaultRouter` (entries, indicators) + manual routes (auth, trends). All under `api/` prefix via `config/urls.py`.
 
 ### Two Bounded Contexts
 
@@ -86,7 +94,11 @@ Requires PostgreSQL. Configure via `.env` file (see `.env.example`):
 ## Testing Strategy
 
 - Domain tests (`tests/domain/`) — Test business logic with mocked repositories. Fast, no database.
-- Integration tests (`tests/infrastructure/`) — Test API endpoints with real PostgreSQL. Use DRF `APIClient`.
+- Integration tests (`tests/infrastructure/`) — Test API endpoints with real PostgreSQL via Docker (`docker start zenlog-db`). Use DRF `APIClient`.
+  - `test_auth.py` — Registration and JWT token tests
+  - `test_repositories.py` — Django ORM repository implementations
+  - `test_wellness_api.py` — Wellness API endpoints (T-I-07 to T-I-13)
+  - `test_security.py` — Role-based access control (T-S-01 to T-S-05, T-S-08)
 - Domain tests MUST NOT import Django. This verifies the hexagonal separation.
 
 ## Project Documentation
