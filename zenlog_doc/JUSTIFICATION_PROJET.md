@@ -1470,3 +1470,187 @@ PostgreSQL (via Django ORM)
 - **Event sourcing** : traçabilité complète des modifications d'entrées wellness.
 - **Cache** : Redis pour les résultats de tendances et les listes d'indicateurs.
 - **CI/CD** : pipeline GitHub Actions avec pytest + ruff + coverage.
+
+---
+
+## 9. Base de données — Modélisation, ORM et performance
+
+### 9.1 Schéma MCD (Modèle Conceptuel de Données)
+
+```
+┌──────────────────┐       ┌──────────────────────┐
+│     User         │       │     Indicator         │
+│──────────────────│       │──────────────────────│
+│ id (UUID) PK     │       │ id (UUID) PK          │
+│ email (unique)   │       │ name (unique)         │
+│ username         │       │ unit                  │
+│ password (hash)  │       │ min_value             │
+│ role (enum)      │       │ max_value             │
+│ is_active        │       │ is_active             │
+└──────┬───────────┘       └──────────┬───────────┘
+       │                              │
+       │ 1..*            1..1         │
+       ▼                              ▼
+┌──────────────────────────────────────┐
+│         WellnessEntry                │
+│──────────────────────────────────────│
+│ id (UUID) PK                         │
+│ patient_id FK → User (CASCADE)       │
+│ indicator_id FK → Indicator (PROTECT)│
+│ date (date)                          │
+│ value (float)                        │
+│ note (text, nullable)                │
+│──────────────────────────────────────│
+│ UNIQUE (patient_id, indicator_id,    │
+│         date)                        │
+└──────────────────────────────────────┘
+
+┌──────────────────────────────────────┐
+│         Assignment                   │
+│──────────────────────────────────────│
+│ id (UUID) PK                         │
+│ coach_id FK → User (CASCADE)         │
+│ patient_id FK → User (CASCADE)       │
+│ start_date (date)                    │
+│ end_date (date, nullable)            │
+│ is_active (bool)                     │
+│──────────────────────────────────────│
+│ UNIQUE (coach_id, patient_id)        │
+│   WHERE is_active = True             │
+│   (partial unique constraint)        │
+└──────────────────────────────────────┘
+```
+
+**Choix de modélisation** :
+
+- **UUID comme clé primaire** : évite l'exposition d'IDs séquentiels (sécurité) et facilite la distribution future.
+- **CASCADE sur patient** : si un patient est supprimé, ses entrées et assignations le sont aussi (RGPD : droit à l'effacement).
+- **PROTECT sur indicator** : un indicateur référencé par des entrées ne peut pas être supprimé accidentellement.
+- **Contrainte partielle sur Assignment** : PostgreSQL permet `UniqueConstraint` avec `condition=Q(is_active=True)`, garantissant un seul coach actif par patient sans empêcher l'historique des assignations passées.
+
+### 9.2 Stratégie anti-N+1
+
+Le problème N+1 survient quand l'ORM exécute une requête par relation accédée en boucle. Dans ZenLog, ce risque est limité par l'architecture hexagonale :
+
+- **Les repositories encapsulent les requêtes** : chaque méthode (`find_by_patient`, `find_active_by_coach`) retourne directement une liste d'entités. Il n'y a pas de lazy loading dans les entités du domaine car elles sont des objets Python purs (dataclasses), pas des instances Django ORM.
+- **Conversion Model → Entity au niveau repository** : la méthode `_to_entity()` extrait les champs scalaires immédiatement. Aucune relation n'est traversée après la sortie du repository.
+- **`select_related` / `prefetch_related`** : si une future feature nécessite de charger des relations (ex : entrée + nom de l'indicateur), le repository est le seul endroit à modifier, sans impacter le domaine.
+
+Concrètement, `DjangoWellnessEntryRepository.find_by_patient()` effectue **une seule requête SQL** avec des filtres Django ORM (`filter()`, pas de boucle).
+
+### 9.3 Migrations et versioning du schéma
+
+- **Django Migrations** : chaque modification de modèle génère un fichier de migration versionné (`0001_initial.py`, etc.), committé dans Git.
+- **Reproductibilité** : `python manage.py migrate` reconstruit le schéma complet sur un nouvel environnement.
+- **Pas de migration manuelle SQL** : tout passe par l'ORM, ce qui garantit la portabilité PostgreSQL → SQLite (tests locaux si besoin).
+
+### 9.4 Gestion des rôles au niveau base
+
+Les rôles (`patient`, `coach`, `admin`) sont stockés dans le champ `User.role` (TextChoices). La sécurité ne repose pas uniquement sur la base : elle est appliquée à 3 niveaux :
+
+1. **Modèle** : contraintes d'intégrité (FK, unique)
+2. **Domaine** : guard clauses dans les services (`CoachingService.check_access()`)
+3. **API** : permissions DRF (`IsPatient`, `IsCoach`, `IsAdmin`) sur chaque endpoint
+
+---
+
+## 10. Déploiement Azure — Stratégie et mise en œuvre
+
+### 10.1 Architecture de déploiement
+
+```
+┌─────────────────────────────────────────────┐
+│              Azure Resource Group            │
+│                 (rg-zenlog)                  │
+│                                              │
+│  ┌─────────────────┐  ┌──────────────────┐  │
+│  │  App Service     │  │ Azure Database   │  │
+│  │  (B1 Free tier)  │  │ for PostgreSQL   │  │
+│  │                  │  │ (Flexible, B1ms) │  │
+│  │  Django + Gunicorn│──│                  │  │
+│  │  Python 3.12     │  │ zenlog DB        │  │
+│  │                  │  │ SSL enforced     │  │
+│  └────────┬─────────┘  └──────────────────┘  │
+│           │                                   │
+│  ┌────────▼─────────┐                        │
+│  │ Application       │                        │
+│  │ Insights          │                        │
+│  │ (monitoring)      │                        │
+│  └──────────────────┘                        │
+└─────────────────────────────────────────────┘
+```
+
+### 10.2 Justification des services Azure
+
+| Service | Rôle | Justification métier |
+| --- | --- | --- |
+| **App Service (B1)** | Hébergement API | PaaS managé, scaling auto, HTTPS natif, SLA 99.95% |
+| **Azure Database for PostgreSQL** | Base de données | Backups automatiques (7j), chiffrement AES-256 au repos, TLS 1.2 en transit, compatible avec l'ORM Django |
+| **Application Insights** | Monitoring | Métriques temps réel, alertes, traces de requêtes, détection d'anomalies — essentiel pour le suivi de données médicales |
+
+**Pourquoi Azure plutôt qu'AWS/Vercel** : compte étudiant gratuit disponible, PostgreSQL managé natif (pas besoin d'un service tiers comme sur Vercel), PaaS adapté à Django (vs Vercel optimisé pour Node.js/Next.js).
+
+### 10.3 Plan de déploiement
+
+```bash
+# 1. Créer le groupe de ressources
+az group create --name rg-zenlog --location francecentral
+
+# 2. Créer le serveur PostgreSQL
+az postgres flexible-server create \
+  --resource-group rg-zenlog \
+  --name zenlog-db \
+  --location francecentral \
+  --sku-name Standard_B1ms \
+  --storage-size 32 \
+  --admin-user zenlogadmin \
+  --admin-password "" \
+  --version 15
+
+# 3. Créer la base de données
+az postgres flexible-server db create \
+  --resource-group rg-zenlog \
+  --server-name zenlog-db \
+  --database-name zenlog
+
+# 4. Créer l'App Service
+az webapp create \
+  --resource-group rg-zenlog \
+  --plan zenlog-plan \
+  --name zenlog-api \
+  --runtime "PYTHON:3.12"
+
+# 5. Configurer les variables d'environnement
+az webapp config appsettings set \
+  --resource-group rg-zenlog \
+  --name zenlog-api \
+  --settings \
+    SECRET_KEY="" \
+    DEBUG="False" \
+    DB_NAME="zenlog" \
+    DB_USER="zenlogadmin" \
+    DB_PASSWORD="" \
+    DB_HOST="zenlog-db.postgres.database.azure.com" \
+    DB_PORT="5432" \
+    CORS_ALLOWED_ORIGINS="https://zenlog-api.azurewebsites.net"
+
+# 6. Déployer depuis Git
+az webapp deployment source config-local-git \
+  --resource-group rg-zenlog \
+  --name zenlog-api
+git remote add azure <deploy-url>
+git push azure main
+```
+
+### 10.4 Disponibilité et résilience
+
+- **SLA 99.95%** : Azure App Service garantit ce niveau de disponibilité.
+- **Backups automatiques** : PostgreSQL Flexible Server sauvegarde automatiquement avec rétention de 7 jours. Restauration point-in-time possible.
+- **Redondance zone** : en cas d'upgrade vers un tier supérieur, zone redundancy disponible sans changement de code.
+- **Health check** : configurable via App Service pour redémarrer l'app automatiquement en cas de crash.
+
+### 10.5 Monitoring et logging
+
+- **Application Insights** : intégrable via le package `opencensus-ext-django` pour tracer chaque requête API, temps de réponse, et erreurs.
+- **Logging Django** : le framework journalise déjà les erreurs (500) et les warnings (401, 429). En production, les logs sont redirigés vers Azure Log Stream.
+- **Alertes** : configurables dans Application Insights (ex : alerte si taux d'erreur > 5%, temps de réponse > 2s).
