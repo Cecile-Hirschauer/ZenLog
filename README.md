@@ -88,8 +88,8 @@ python manage.py migrate
 python manage.py runserver
 ```
 
-L'API est accessible sur `http://localhost:8000/api/`.
-La documentation Swagger est sur `http://localhost:8000/api/docs/`.
+L'API est accessible sur `https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/`.
+La documentation Swagger est sur `https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/docs/`.
 
 ## API en production
 
@@ -121,10 +121,16 @@ pytest --cov=domain --cov=infrastructure --cov-report=term-missing
 
 Voici comment tester tous les endpoints en quelques minutes avec `curl` (ou depuis Swagger UI sur `/api/docs/`).
 
+> **URL de base** :
+> - **Production** : `https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net`
+> - **Local** : `https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net`
+>
+> Les exemples ci-dessous utilisent l'URL de production. Pour tester en local, remplacez l'URL de base.
+
 ### 1. Créer un compte patient
 
 ```bash
-curl -X POST http://localhost:8000/api/auth/register/ \
+curl -X POST https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/auth/register/ \
   -H "Content-Type: application/json" \
   -d '{"email": "patient@test.com", "username": "patient1", "password": "SecurePass123!", "role": "patient"}'
 ```
@@ -132,7 +138,7 @@ curl -X POST http://localhost:8000/api/auth/register/ \
 ### 2. Obtenir un token JWT
 
 ```bash
-curl -X POST http://localhost:8000/api/auth/token/ \
+curl -X POST https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/auth/token/ \
   -H "Content-Type: application/json" \
   -d '{"email": "patient@test.com", "password": "SecurePass123!"}'
 ```
@@ -144,17 +150,17 @@ Utilisez le token `access` dans les requêtes suivantes.
 
 ```bash
 # D'abord créer un admin
-curl -X POST http://localhost:8000/api/auth/register/ \
+curl -X POST https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/auth/register/ \
   -H "Content-Type: application/json" \
   -d '{"email": "admin@test.com", "username": "admin1", "password": "SecurePass123!", "role": "admin"}'
 
 # Obtenir son token
-curl -X POST http://localhost:8000/api/auth/token/ \
+curl -X POST https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/auth/token/ \
   -H "Content-Type: application/json" \
   -d '{"email": "admin@test.com", "password": "SecurePass123!"}'
 
 # Créer l'indicateur (remplacer <ADMIN_TOKEN>)
-curl -X POST http://localhost:8000/api/wellness/indicators/ \
+curl -X POST https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/wellness/indicators/ \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <ADMIN_TOKEN>" \
   -d '{"name": "Sommeil", "unit": "/10", "min_value": 1, "max_value": 10}'
@@ -163,7 +169,7 @@ curl -X POST http://localhost:8000/api/wellness/indicators/ \
 ### 4. Enregistrer une entrée bien-être (en tant que patient)
 
 ```bash
-curl -X POST http://localhost:8000/api/wellness/entries/ \
+curl -X POST https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/wellness/entries/ \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <PATIENT_TOKEN>" \
   -d '{"indicator_id": "<UUID_INDICATEUR>", "date": "2026-03-23", "value": 7.5, "note": "Bonne nuit"}'
@@ -173,7 +179,7 @@ curl -X POST http://localhost:8000/api/wellness/entries/ \
 
 ```bash
 curl -H "Authorization: Bearer <PATIENT_TOKEN>" \
-  "http://localhost:8000/api/wellness/entries/"
+  "https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/wellness/entries/"
 ```
 
 Filtres disponibles : `?indicator_id=<UUID>&date_from=2026-03-01&date_to=2026-03-31`
@@ -182,46 +188,46 @@ Filtres disponibles : `?indicator_id=<UUID>&date_from=2026-03-01&date_to=2026-03
 
 ```bash
 curl -H "Authorization: Bearer <PATIENT_TOKEN>" \
-  "http://localhost:8000/api/wellness/trends/?indicator_id=<UUID>&days=7"
+  "https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/wellness/trends/?indicator_id=<UUID>&days=7"
 ```
 
 ### 7. Tester le coaching (coach lit les données patient)
 
 ```bash
 # Créer un coach
-curl -X POST http://localhost:8000/api/auth/register/ \
+curl -X POST https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/auth/register/ \
   -H "Content-Type: application/json" \
   -d '{"email": "coach@test.com", "username": "coach1", "password": "SecurePass123!", "role": "coach"}'
 
 # Obtenir son token
-curl -X POST http://localhost:8000/api/auth/token/ \
+curl -X POST https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/auth/token/ \
   -H "Content-Type: application/json" \
   -d '{"email": "coach@test.com", "password": "SecurePass123!"}'
 
 # Lister les patients assignés (nécessite une assignation en BDD)
 curl -H "Authorization: Bearer <COACH_TOKEN>" \
-  "http://localhost:8000/api/coaching/patients/"
+  "https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/coaching/patients/"
 
 # Lire les entrées d'un patient assigné
 curl -H "Authorization: Bearer <COACH_TOKEN>" \
-  "http://localhost:8000/api/coaching/patients/<PATIENT_UUID>/entries/"
+  "https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/coaching/patients/<PATIENT_UUID>/entries/"
 ```
 
 ### 8. Tester la sécurité
 
 ```bash
 # Sans token → 401
-curl http://localhost:8000/api/wellness/entries/
+curl https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/wellness/entries/
 
 # Patient essaie de créer un indicateur → 403
-curl -X POST http://localhost:8000/api/wellness/indicators/ \
+curl -X POST https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/wellness/indicators/ \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <PATIENT_TOKEN>" \
   -d '{"name": "hack", "unit": "x", "min_value": 0, "max_value": 10}'
 
 # Injection SQL dans les dates → 200 (ignoré) ou 400
 curl -H "Authorization: Bearer <PATIENT_TOKEN>" \
-  "http://localhost:8000/api/wellness/entries/?date_from='; DROP TABLE--"
+  "https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/wellness/entries/?date_from='; DROP TABLE--"
 ```
 
 ## Endpoints API
