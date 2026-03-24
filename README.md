@@ -46,6 +46,9 @@ ZenLog/
 | Doc API | drf-spectacular (OpenAPI 3.0) | Swagger UI auto-généré |
 | Qualité | ruff, pre-commit, pytest | Lint + format + tests automatisés |
 | CORS | django-cors-headers | Sécurisation cross-origin |
+| BDD prod | Neon (PostgreSQL serverless) | Free tier, compatible Django ORM, SSL natif |
+| Hébergement | Azure App Service (F1) | PaaS managé, CI/CD via GitHub Actions |
+| Serveur WSGI | Gunicorn + WhiteNoise | Production-ready, fichiers statiques intégrés |
 
 ## Prérequis
 
@@ -87,6 +90,16 @@ python manage.py runserver
 
 L'API est accessible sur `http://localhost:8000/api/`.
 La documentation Swagger est sur `http://localhost:8000/api/docs/`.
+
+## API en production
+
+L'API est déployée sur Azure App Service avec une base PostgreSQL hébergée sur Neon :
+
+**Swagger UI** : [https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/docs/](https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/docs/)
+
+**Base URL** : `https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/`
+
+Le déploiement est automatisé via GitHub Actions : chaque push sur `main` déclenche un build + deploy sur Azure.
 
 ## Lancer les tests
 
@@ -255,12 +268,37 @@ curl -H "Authorization: Bearer <PATIENT_TOKEN>" \
 |---|---|---|
 | `SECRET_KEY` | Clé secrète Django | `fallback-dev-key` |
 | `DEBUG` | Mode debug | `False` |
-| `DB_NAME` | Nom BDD PostgreSQL | `zenlog` |
-| `DB_USER` | Utilisateur BDD | `zenlog` |
-| `DB_PASSWORD` | Mot de passe BDD | — |
-| `DB_HOST` | Hôte BDD | `localhost` |
-| `DB_PORT` | Port BDD | `5432` |
+| `DATABASE_URL` | URL complète PostgreSQL (prod/Neon) | — |
+| `DB_NAME` | Nom BDD PostgreSQL (dev local) | `zenlog` |
+| `DB_USER` | Utilisateur BDD (dev local) | `zenlog` |
+| `DB_PASSWORD` | Mot de passe BDD (dev local) | — |
+| `DB_HOST` | Hôte BDD (dev local) | `localhost` |
+| `DB_PORT` | Port BDD (dev local) | `5432` |
+| `ALLOWED_HOSTS` | Domaines autorisés | `localhost,127.0.0.1` |
 | `CORS_ALLOWED_ORIGINS` | Origines CORS (séparées par `,`) | — |
+
+> **Note** : en production, `DATABASE_URL` est prioritaire. Si défini, les variables `DB_*` individuelles sont ignorées. En développement local, utilisez les variables `DB_*` via le fichier `.env`.
+
+## Déploiement
+
+### Architecture de production
+
+```
+GitHub (push main) → GitHub Actions (CI/CD) → Azure App Service (Python 3.12, Gunicorn)
+                                                        ↓
+                                               Neon PostgreSQL (serverless, Frankfurt)
+```
+
+### Pourquoi Neon plutôt qu'Azure Database for PostgreSQL ?
+
+Azure Database for PostgreSQL Flexible Server coûte minimum ~12€/mois même en tier Burstable. Pour un MVP en phase d'évaluation, Neon offre un PostgreSQL serverless gratuit (0.5 GB, région Frankfurt) entièrement compatible avec Django ORM. La migration vers Azure Database for PostgreSQL est prévue en production avec backups automatiques (7j) et chiffrement AES-256.
+
+### CI/CD
+
+Chaque push sur `main` déclenche automatiquement via GitHub Actions :
+1. Installation des dépendances
+2. Collecte des fichiers statiques
+3. Déploiement sur Azure App Service via publish profile
 
 ## Licence
 
