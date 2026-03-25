@@ -1,3 +1,5 @@
+"""Tests for the TrackingService domain service."""
+
 from datetime import date
 from unittest.mock import MagicMock
 
@@ -10,6 +12,7 @@ from domain.services.tracking_service import TrackingService
 
 @pytest.fixture
 def mood_indicator():
+    """Return a mood indicator with a 1-10 range."""
     return Indicator(
         id="ind-1",
         name="mood",
@@ -21,11 +24,13 @@ def mood_indicator():
 
 @pytest.fixture
 def entry_repo():
+    """Return a mock WellnessEntryRepository."""
     return MagicMock()
 
 
 @pytest.fixture
 def indicator_repo(mood_indicator):
+    """Return a mock IndicatorRepository pre-configured with mood_indicator."""
     repo = MagicMock()
     repo.find_by_id.return_value = mood_indicator
     return repo
@@ -33,6 +38,7 @@ def indicator_repo(mood_indicator):
 
 @pytest.fixture
 def service(entry_repo, indicator_repo):
+    """Return a TrackingService wired with mock repositories."""
     return TrackingService(
         entry_repo=entry_repo,
         indicator_repo=indicator_repo,

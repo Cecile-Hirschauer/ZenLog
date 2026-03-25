@@ -1,3 +1,5 @@
+"""Abstract repository port for WellnessEntry persistence."""
+
 from abc import ABC, abstractmethod
 from datetime import date
 

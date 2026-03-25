@@ -1,3 +1,5 @@
+"""Assignment entity representing a coach-patient relationship."""
+
 from dataclasses import dataclass
 from datetime import date
 

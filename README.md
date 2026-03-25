@@ -44,6 +44,7 @@ ZenLog/
 | BDD | PostgreSQL 15+ | Contraintes avancées, UUID natif |
 | Auth | JWT (SimpleJWT) | Stateless, adapté mobile/SPA |
 | Doc API | drf-spectacular (OpenAPI 3.0) | Swagger UI auto-généré |
+| Doc code | pdoc | Documentation Python depuis les docstrings PEP 257 |
 | Qualité | ruff, pre-commit, pytest | Lint + format + tests automatisés |
 | CORS | django-cors-headers | Sécurisation cross-origin |
 | BDD prod | Neon (PostgreSQL serverless) | Free tier, compatible Django ORM, SSL natif |
@@ -100,6 +101,24 @@ L'API est déployée sur Azure App Service avec une base PostgreSQL hébergée s
 **Base URL** : `https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/`
 
 Le déploiement est automatisé via GitHub Actions : chaque push sur `main` déclenche un build + deploy sur Azure.
+
+## Documentation du code
+
+La documentation du code source est générée automatiquement depuis les docstrings (PEP 257) avec **pdoc**.
+
+**En production** : [`/api/code-docs/`](https://zenlog-fpbmd5badufda0ep.francecentral-01.azurewebsites.net/api/code-docs/)
+
+**En local** :
+
+```bash
+# Générer le HTML statique dans docs/api/
+python docs/generate.py
+
+# Serveur live avec rechargement automatique (http://localhost:8080)
+python docs/generate.py --live
+```
+
+La documentation couvre les entités du domaine, les ports (interfaces), les services métier et la configuration infrastructure.
 
 ## Lancer les tests
 
@@ -247,6 +266,7 @@ curl -H "Authorization: Bearer <PATIENT_TOKEN>" \
 | GET | `/api/coaching/patients/` | Coach | Lister mes patients assignés |
 | GET | `/api/coaching/patients/{id}/entries/` | Coach | Entrées d'un patient assigné |
 | GET | `/api/docs/` | Aucun | Swagger UI |
+| GET | `/api/code-docs/` | Aucun | Documentation code (pdoc) |
 | GET | `/api/schema/` | Aucun | Schéma OpenAPI JSON |
 
 ## Sécurité

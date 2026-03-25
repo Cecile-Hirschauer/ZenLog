@@ -18,6 +18,12 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Generate API documentation
+        run: python docs/generate.py
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+
       - name: Collect static files
         run: python manage.py collectstatic --noinput
         env:

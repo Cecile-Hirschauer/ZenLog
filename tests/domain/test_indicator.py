@@ -1,3 +1,5 @@
+"""Tests for the Indicator entity."""
+
 from domain.entities.indicator import Indicator
 
 

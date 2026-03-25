@@ -71,6 +71,12 @@ instance/
 # Sphinx documentation
 docs/_build/
 
+# pdoc generated documentation
+docs/api/
+
+# Django collectstatic output
+staticfiles/
+
 # PyBuilder
 .pybuilder/
 target/

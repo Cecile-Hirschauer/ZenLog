@@ -1,3 +1,5 @@
+"""Service layer for patient wellness tracking operations."""
+
 import uuid
 from datetime import date, timedelta
 
@@ -20,6 +22,12 @@ class TrackingService:
         entry_repo: WellnessEntryRepository,
         indicator_repo: IndicatorRepository,
     ):
+        """Initialize the tracking service with required repositories.
+
+        Args:
+            entry_repo: Repository for wellness entry persistence.
+            indicator_repo: Repository for indicator persistence.
+        """
         self.entry_repo = entry_repo
         self.indicator_repo = indicator_repo
 
@@ -119,7 +127,18 @@ class TrackingService:
     def compute_trend(
         self, patient_id: str, indicator_id: str, period_days: int
     ) -> Trend:
-        """T-D-07, T-D-08: Compute average over a period , excluding missing days."""
+        """Compute the average value of an indicator over a given period.
+
+        Missing days are excluded from the calculation.
+
+        Args:
+            patient_id: ID of the patient.
+            indicator_id: ID of the indicator to aggregate.
+            period_days: Number of days to look back from today.
+
+        Returns:
+            A Trend object with the computed average and entry count.
+        """
         date_to = date.today()
         date_from = date_to - timedelta(days=period_days)
 

@@ -1,3 +1,5 @@
+"""Abstract repository port for Indicator persistence."""
+
 from abc import ABC, abstractmethod
 
 from domain.entities.indicator import Indicator

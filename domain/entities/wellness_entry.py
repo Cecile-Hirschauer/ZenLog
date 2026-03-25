@@ -1,3 +1,5 @@
+"""WellnessEntry entity representing a daily patient measurement."""
+
 from dataclasses import dataclass
 from datetime import date
 

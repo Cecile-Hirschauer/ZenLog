@@ -1,3 +1,5 @@
+"""Tests for the WellnessEntry entity."""
+
 from datetime import date
 
 from domain.entities.wellness_entry import WellnessEntry
@@ -7,6 +9,7 @@ class TestWellnessEntry:
     """Tests T-D-18, T-D-19 from test plan"""
 
     def _make_entry(self, patient_id="patient-1"):
+        """Create a WellnessEntry fixture with sensible defaults."""
         return WellnessEntry(
             id="entry-1",
             patient_id=patient_id,

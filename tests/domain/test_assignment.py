@@ -1,3 +1,5 @@
+"""Tests for the Assignment entity."""
+
 from datetime import date
 
 from domain.entities.assignment import Assignment

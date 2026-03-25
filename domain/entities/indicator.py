@@ -1,3 +1,5 @@
+"""Indicator entity representing a trackable wellness metric."""
+
 from dataclasses import dataclass
 
 

@@ -1,3 +1,5 @@
+"""Abstract repository port for Assignment persistence."""
+
 from abc import ABC, abstractmethod
 
 from domain.entities.assignment import Assignment
