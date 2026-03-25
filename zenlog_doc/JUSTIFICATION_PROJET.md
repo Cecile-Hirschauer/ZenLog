@@ -98,7 +98,7 @@ Chaque choix technique ci-dessous est motivé par un besoin métier ou un contex
 | Données de santé sensibles nécessitant intégrité et fiabilité | PostgreSQL est conforme ACID, garantissant que chaque saisie est soit complètement enregistrée, soit pas du tout (pas de données corrompues en cas de crash). |
 | Requêtes d'agrégation (moyennes, tendances sur 7/30 jours) | PostgreSQL excelle sur les fonctions d'agrégation et les window functions, essentielles pour calculer des tendances sans surcharger le serveur applicatif. |
 | Contraintes d'accès au niveau base | PostgreSQL supporte le Row-Level Security (RLS), permettant d'ajouter une couche de sécurité supplémentaire directement en base si nécessaire (défense en profondeur). |
-| Déploiement cloud (Azure) | Azure Database for PostgreSQL est un service managé disponible en free tier, avec sauvegardes automatiques, chiffrement au repos et haute disponibilité configurable. Cela répond aux exigences de disponibilité et de résilience du cahier des charges. |
+| Déploiement cloud (Azure + Neon) | En production, la base est hébergée sur Neon (PostgreSQL serverless, free tier, région Frankfurt) connectée via `DATABASE_URL` avec SSL obligatoire. Neon est entièrement compatible avec l'ORM Django et offre un tier gratuit adapté au MVP. Une migration vers Azure Database for PostgreSQL est envisageable pour la production à plus grande échelle. |
 | Évolutivité | Si le nombre d'utilisateurs croît, PostgreSQL supporte la réplication, le partitionnement et l'indexation avancée, contrairement à SQLite qui est limité à un seul writer. |
 
 **Pourquoi pas SQLite ?** SQLite est pratique en développement local mais ne supporte pas les accès concurrents en écriture, n'offre pas de chiffrement au repos natif, et n'est pas adapté à un déploiement cloud multi-utilisateurs. Pour une application manipulant des données de santé en production, PostgreSQL est le choix responsable.
@@ -111,21 +111,23 @@ Chaque choix technique ci-dessous est motivé par un besoin métier ou un contex
 | API stateless consommable par un futur front mobile | JWT est le standard de facto pour l'authentification d'API REST consommées par des clients mobiles ou SPA, contrairement aux sessions côté serveur qui nécessitent la gestion de cookies. |
 | Sécurité des sessions | Les tokens ont une durée de vie courte (access : 15 min, refresh : 24h), limitant la fenêtre d'exploitation en cas de fuite. La rotation des refresh tokens ajoute une couche supplémentaire. |
 
-### 3.5 Documentation API : drf-spectacular (OpenAPI 3.0)
+### 3.5 Documentation : drf-spectacular (OpenAPI 3.0) + pdoc (documentation code)
 
 | Besoin métier | Justification technique |
 |---|---|
 | Exigence de documentation API dans le cahier des charges | drf-spectacular génère automatiquement un schéma OpenAPI 3.0 à partir des serializers et viewsets DRF, garantissant que la doc est toujours synchronisée avec le code. |
 | Faciliter l'intégration par un futur front-end | Swagger UI (inclus) permet à un développeur front de tester les endpoints directement depuis le navigateur, avec des exemples de requêtes et de réponses. |
+| Documentation du code source pour la maintenabilité | pdoc génère une documentation HTML navigable à partir des docstrings PEP 257. Un script dédié (`docs/generate.py`) initialise Django avant la génération, et la doc est servie en production via WhiteNoise à `/api/code-docs/`. |
 
-### 3.6 Déploiement : Azure App Service + Azure Database for PostgreSQL
+### 3.6 Déploiement : Azure App Service + Neon PostgreSQL
 
 | Besoin métier | Justification technique |
 |---|---|
-| Disponibilité et redondance (exigence cahier des charges) | Azure App Service offre un SLA de 99.95% avec redondance de zone configurable. Azure Database for PostgreSQL inclut des sauvegardes automatiques (rétention 7 jours en free tier). |
-| Données de santé : chiffrement au repos et en transit | Azure chiffre les données au repos par défaut (AES-256) et force TLS 1.2 pour le transit. Cela répond aux exigences RGPD sans configuration supplémentaire. |
-| Monitoring et logging | Azure Application Insights s'intègre nativement avec Django pour collecter métriques, traces et logs applicatifs. |
-| Compte étudiant disponible | Le free tier Azure (200$ de crédits) permet un déploiement réel sans coût, conformément à la recommandation du cahier des charges. |
+| Disponibilité et redondance (exigence cahier des charges) | Azure App Service offre un SLA de 99.95% avec redondance de zone configurable. |
+| Base de données managée sans coût | Neon PostgreSQL serverless (free tier, 0.5 GB, région Frankfurt) offre un PostgreSQL entièrement compatible Django ORM avec SSL obligatoire, sans frais pour un MVP. |
+| Données de santé : chiffrement en transit | La connexion Neon impose `sslmode=require` via `DATABASE_URL`. Azure force HTTPS pour toutes les requêtes API. |
+| Déploiement continu sans CLI | L'App Service a été créé depuis le portail Azure, la connexion GitHub configurée via le Centre de déploiement. GitHub Actions déploie automatiquement à chaque push sur `main`. |
+| Compte étudiant disponible | Le free tier Azure (F1) permet un déploiement réel sans coût, conformément à la recommandation du cahier des charges. |
 
 ### 3.7 Gestion de code : Git + GitHub Flow (PR) simplifié
 
@@ -272,7 +274,10 @@ ZenLog/                            # Racine du repo
 │   ├── domain/                    # Tests domaine (pytest pur, pas de BDD)
 │   └── infrastructure/            # Tests intégration (pytest-django + BDD)
 │
-├── .github/workflows/ci.yml       # Pipeline CI
+├── docs/
+│   └── generate.py                # Génération doc pdoc (Django-aware)
+│
+├── .github/workflows/main_zenlog.yml  # Pipeline CI/CD (deploy Azure)
 ├── .pre-commit-config.yaml        # Hooks pre-commit
 ├── ruff.toml                      # Configuration linter
 ├── .cz.toml                       # Configuration conventional commits
@@ -1469,7 +1474,7 @@ PostgreSQL (via Django ORM)
 - **GraphQL** : ajouter une couche Strawberry pour les clients mobiles (agrégation côté serveur, réduction des appels réseau).
 - **Event sourcing** : traçabilité complète des modifications d'entrées wellness.
 - **Cache** : Redis pour les résultats de tendances et les listes d'indicateurs.
-- **CI/CD** : pipeline GitHub Actions avec pytest + ruff + coverage.
+- **CI/CD** : le pipeline GitHub Actions est en place (build, génération de doc, collectstatic, deploy Azure). L'ajout de pytest + ruff + coverage dans le pipeline reste une amélioration possible.
 
 ---
 
@@ -1559,98 +1564,98 @@ Les rôles (`patient`, `coach`, `admin`) sont stockés dans le champ `User.role`
 ### 10.1 Architecture de déploiement
 
 ```
-┌─────────────────────────────────────────────┐
-│              Azure Resource Group            │
-│                 (rg-zenlog)                  │
-│                                              │
-│  ┌─────────────────┐  ┌──────────────────┐  │
-│  │  App Service     │  │ Azure Database   │  │
-│  │  (B1 Free tier)  │  │ for PostgreSQL   │  │
-│  │                  │  │ (Flexible, B1ms) │  │
-│  │  Django + Gunicorn│──│                  │  │
-│  │  Python 3.12     │  │ zenlog DB        │  │
-│  │                  │  │ SSL enforced     │  │
-│  └────────┬─────────┘  └──────────────────┘  │
-│           │                                   │
-│  ┌────────▼─────────┐                        │
-│  │ Application       │                        │
-│  │ Insights          │                        │
-│  │ (monitoring)      │                        │
-│  └──────────────────┘                        │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                                                              │
+│  GitHub (push main)                                          │
+│       │                                                      │
+│       ▼                                                      │
+│  GitHub Actions (.github/workflows/main_zenlog.yml)          │
+│       │  1. pip install -r requirements.txt                  │
+│       │  2. python docs/generate.py                          │
+│       │  3. python manage.py collectstatic                   │
+│       │  4. azure/webapps-deploy@v3 (publish profile)        │
+│       │                                                      │
+│       ▼                                                      │
+│  ┌─────────────────────┐         ┌─────────────────────────┐ │
+│  │  Azure App Service   │         │  Neon PostgreSQL         │ │
+│  │  (F1 Free tier)      │────────▶│  (serverless, Frankfurt) │ │
+│  │  France Central      │  SSL    │  free tier, 0.5 GB       │ │
+│  │  Python 3.12         │         │  DATABASE_URL +           │ │
+│  │  Gunicorn + WhiteNoise│        │  sslmode=require          │ │
+│  └──────────────────────┘         └──────────────────────────┘ │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-### 10.2 Justification des services Azure
+### 10.2 Justification des services
 
 | Service | Rôle | Justification métier |
 | --- | --- | --- |
-| **App Service (B1)** | Hébergement API | PaaS managé, scaling auto, HTTPS natif, SLA 99.95% |
-| **Azure Database for PostgreSQL** | Base de données | Backups automatiques (7j), chiffrement AES-256 au repos, TLS 1.2 en transit, compatible avec l'ORM Django |
-| **Application Insights** | Monitoring | Métriques temps réel, alertes, traces de requêtes, détection d'anomalies — essentiel pour le suivi de données médicales |
+| **Azure App Service (F1)** | Hébergement API | PaaS managé, HTTPS natif, SLA 99.95%, plan gratuit suffisant pour le MVP |
+| **Neon PostgreSQL** | Base de données | PostgreSQL serverless gratuit (0.5 GB), compatible Django ORM, SSL natif, région Frankfurt (proximité UE) |
+| **WhiteNoise** | Fichiers statiques | Sert les fichiers statiques (Swagger UI, doc pdoc) directement depuis Gunicorn sans serveur web séparé |
+| **GitHub Actions** | CI/CD | Déploiement automatique à chaque push sur `main`, intégré nativement avec Azure via publish profile |
 
-**Pourquoi Azure plutôt qu'AWS/Vercel** : compte étudiant gratuit disponible, PostgreSQL managé natif (pas besoin d'un service tiers comme sur Vercel), PaaS adapté à Django (vs Vercel optimisé pour Node.js/Next.js).
+**Pourquoi Neon plutôt qu'Azure Database for PostgreSQL ?** Azure Database for PostgreSQL Flexible Server coûte minimum ~12€/mois même en tier Burstable. Pour un MVP en phase d'évaluation, Neon offre un PostgreSQL serverless gratuit entièrement compatible avec Django ORM. La connexion utilise `DATABASE_URL` avec `sslmode=require`, garantissant le chiffrement en transit. Une migration vers Azure Database for PostgreSQL est envisageable en production avec backups automatiques (7j) et chiffrement AES-256.
 
-### 10.3 Plan de déploiement
+**Pourquoi Azure plutôt qu'AWS/Vercel** : compte étudiant gratuit disponible, PaaS adapté à Django (vs Vercel optimisé pour Node.js/Next.js), intégration native avec GitHub Actions.
 
-```bash
-# 1. Créer le groupe de ressources
-az group create --name rg-zenlog --location francecentral
+### 10.3 Mise en place du déploiement
 
-# 2. Créer le serveur PostgreSQL
-az postgres flexible-server create \
-  --resource-group rg-zenlog \
-  --name zenlog-db \
-  --location francecentral \
-  --sku-name Standard_B1ms \
-  --storage-size 32 \
-  --admin-user zenlogadmin \
-  --admin-password "" \
-  --version 15
+Le déploiement a été configuré entièrement depuis les interfaces web, sans utiliser la CLI Azure :
 
-# 3. Créer la base de données
-az postgres flexible-server db create \
-  --resource-group rg-zenlog \
-  --server-name zenlog-db \
-  --database-name zenlog
+**Étape 1 — Créer la base de données Neon** :
 
-# 4. Créer l'App Service
-az webapp create \
-  --resource-group rg-zenlog \
-  --plan zenlog-plan \
-  --name zenlog-api \
-  --runtime "PYTHON:3.12"
+1. Créer un compte sur [neon.tech](https://neon.tech)
+2. Créer un projet (région Frankfurt pour la proximité UE)
+3. Copier la `DATABASE_URL` fournie (format : `postgresql://user:password@host/dbname?sslmode=require`)
 
-# 5. Configurer les variables d'environnement
-az webapp config appsettings set \
-  --resource-group rg-zenlog \
-  --name zenlog-api \
-  --settings \
-    SECRET_KEY="" \
-    DEBUG="False" \
-    DB_NAME="zenlog" \
-    DB_USER="zenlogadmin" \
-    DB_PASSWORD="" \
-    DB_HOST="zenlog-db.postgres.database.azure.com" \
-    DB_PORT="5432" \
-    CORS_ALLOWED_ORIGINS="https://zenlog-api.azurewebsites.net"
+**Étape 2 — Créer l'App Service Azure** :
 
-# 6. Déployer depuis Git
-az webapp deployment source config-local-git \
-  --resource-group rg-zenlog \
-  --name zenlog-api
-git remote add azure <deploy-url>
-git push azure main
+1. Depuis le portail Azure → Créer une ressource → Web App
+2. Configuration : plan F1 (gratuit), runtime Python 3.12, région France Central
+3. Dans Configuration → Application settings, ajouter les variables d'environnement :
+   - `DATABASE_URL` : chaîne de connexion Neon
+   - `SECRET_KEY` : clé secrète Django générée
+   - `ALLOWED_HOSTS` : domaine Azure de l'app
+   - `CORS_ALLOWED_ORIGINS` : origines autorisées
+
+**Étape 3 — Connecter GitHub pour le déploiement continu** :
+
+1. Depuis l'App Service → Centre de déploiement → Source : GitHub
+2. Sélectionner le repo et la branche `main`
+3. Azure génère automatiquement le workflow GitHub Actions
+4. Ajouter les secrets dans GitHub (Settings → Secrets and variables → Actions) :
+   - `AZURE_WEBAPP_PUBLISH_PROFILE` : profil de publication téléchargé depuis Azure
+   - `DATABASE_URL` : même valeur que dans Azure (nécessaire pour le build)
+   - `SECRET_KEY` : même valeur que dans Azure (nécessaire pour `collectstatic`)
+
+Le workflow GitHub Actions (`.github/workflows/main_zenlog.yml`) a ensuite été personnalisé pour ajouter la génération de la documentation pdoc avant `collectstatic`.
+
+### 10.4 Pipeline CI/CD
+
+Chaque push sur `main` déclenche automatiquement :
+
+```yaml
+# .github/workflows/main_zenlog.yml
+steps:
+  - pip install -r requirements.txt       # Dépendances
+  - python docs/generate.py               # Doc pdoc → docs/api/
+  - python manage.py collectstatic        # Statiques → staticfiles/
+  - azure/webapps-deploy@v3               # Déploiement via publish profile
 ```
 
-### 10.4 Disponibilité et résilience
+Les secrets `DATABASE_URL` et `SECRET_KEY` sont injectés via les GitHub Secrets pour les étapes de build qui nécessitent Django configuré.
+
+### 10.5 Disponibilité et résilience
 
 - **SLA 99.95%** : Azure App Service garantit ce niveau de disponibilité.
-- **Backups automatiques** : PostgreSQL Flexible Server sauvegarde automatiquement avec rétention de 7 jours. Restauration point-in-time possible.
-- **Redondance zone** : en cas d'upgrade vers un tier supérieur, zone redundancy disponible sans changement de code.
+- **Neon** : infrastructure serverless avec redondance intégrée. Les données sont persistées sur le stockage distribué de Neon.
 - **Health check** : configurable via App Service pour redémarrer l'app automatiquement en cas de crash.
+- **Évolution** : migration vers Azure Database for PostgreSQL possible sans changement de code (seule `DATABASE_URL` change).
 
-### 10.5 Monitoring et logging
+### 10.6 Monitoring et logging
 
-- **Application Insights** : intégrable via le package `opencensus-ext-django` pour tracer chaque requête API, temps de réponse, et erreurs.
-- **Logging Django** : le framework journalise déjà les erreurs (500) et les warnings (401, 429). En production, les logs sont redirigés vers Azure Log Stream.
-- **Alertes** : configurables dans Application Insights (ex : alerte si taux d'erreur > 5%, temps de réponse > 2s).
+- **Azure Log Stream** : les logs Gunicorn et Django sont accessibles en temps réel depuis le portail Azure (App Service → Log Stream).
+- **Logging Django** : le framework journalise les erreurs (500) et les warnings (401, 429).
+- **Application Insights** : intégrable ultérieurement via `opencensus-ext-django` pour des métriques avancées (traces de requêtes, temps de réponse, alertes).
