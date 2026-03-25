@@ -315,16 +315,32 @@ GitHub (push main) → GitHub Actions (CI/CD) → Azure App Service (Python 3.12
                                                Neon PostgreSQL (serverless, Frankfurt)
 ```
 
+### Mise en place
+
+Le déploiement a été configuré entièrement depuis les interfaces web (sans CLI) :
+
+1. **Azure App Service** : créé depuis le portail Azure (plan F1 gratuit, région France Central, runtime Python 3.12)
+2. **Neon PostgreSQL** : base de données créée depuis le dashboard Neon (free tier, région Frankfurt)
+3. **Connexion GitHub → Azure** : configurée depuis le portail Azure via le Centre de déploiement, qui génère automatiquement le workflow GitHub Actions et le publish profile
+4. **Secrets GitHub** (`Settings > Secrets and variables > Actions`) :
+   - `AZURE_WEBAPP_PUBLISH_PROFILE` : profil de publication téléchargé depuis Azure
+   - `DATABASE_URL` : chaîne de connexion Neon (`postgresql://user:password@host/dbname?sslmode=require`)
+   - `SECRET_KEY` : clé secrète Django pour la production
+5. **Variables d'environnement Azure** (`App Service > Configuration > Application settings`) :
+   - `DATABASE_URL`, `SECRET_KEY`, `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`
+
 ### Pourquoi Neon plutôt qu'Azure Database for PostgreSQL ?
 
-Azure Database for PostgreSQL Flexible Server coûte minimum ~12€/mois même en tier Burstable. Pour un MVP en phase d'évaluation, Neon offre un PostgreSQL serverless gratuit (0.5 GB, région Frankfurt) entièrement compatible avec Django ORM. La migration vers Azure Database for PostgreSQL est prévue en production avec backups automatiques (7j) et chiffrement AES-256.
+Azure Database for PostgreSQL Flexible Server coûte minimum ~12€/mois même en tier Burstable. Pour un MVP en phase d'évaluation, Neon offre un PostgreSQL serverless gratuit (0.5 GB, région Frankfurt) entièrement compatible avec Django ORM et connecté via `DATABASE_URL` avec SSL obligatoire (`?sslmode=require`). La migration vers Azure Database for PostgreSQL est envisageable en production avec backups automatiques (7j) et chiffrement AES-256.
 
 ### CI/CD
 
-Chaque push sur `main` déclenche automatiquement via GitHub Actions :
-1. Installation des dépendances
-2. Collecte des fichiers statiques
-3. Déploiement sur Azure App Service via publish profile
+Chaque push sur `main` déclenche automatiquement via GitHub Actions (`.github/workflows/main_zenlog.yml`) :
+
+1. Installation des dépendances (`pip install -r requirements.txt`)
+2. Génération de la documentation code (`python docs/generate.py`)
+3. Collecte des fichiers statiques (`python manage.py collectstatic`)
+4. Déploiement sur Azure App Service via publish profile (`azure/webapps-deploy@v3`)
 
 ## Licence
 
